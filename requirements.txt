@@ -1,5 +1,2 @@
 flask
-twilio
-gunicorn
-selenium
-webdriver-manager
+requests
