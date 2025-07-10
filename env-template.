@@ -1,3 +1,3 @@
-TWILIO_ACCOUNT_SID=ضع هنا SID من Twilio
-TWILIO_AUTH_TOKEN=ضع هنا التوكن من Twilio
-TWILIO_PHONE_NUMBER=whatsapp:+رقم_واتساب_Twilio
+TWILIO_ACCOUNT_SID=منTwilio_احذف_هاذا_السطر
+TWILIO_AUTH_TOKEN=منTwilio_احذف_هاذا_السطر
+TWILIO_PHONE_NUMBER=whatsapp:+96778323490
