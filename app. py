@@ -1,0 +1,52 @@
+from flask import Flask, request
+import requests
+import os
+
+app = Flask(__name__)
+
+ULTRAMSG_INSTANCE_ID = os.getenv("ULTRAMSG_INSTANCE_ID")
+ULTRAMSG_TOKEN = os.getenv("ULTRAMSG_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+def send_message(to, message):
+    url = f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE_ID}/messages/chat"
+    payload = {
+        "token": ULTRAMSG_TOKEN,
+        "to": to,
+        "body": message,
+        "priority": 10,
+        "referenceId": ""
+    }
+    requests.post(url, data=payload)
+
+def get_gpt_reply(user_message):
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    body = {
+        "model": "gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": user_message}]
+    }
+    res = requests.post(url, json=body, headers=headers)
+    return res.json()["choices"][0]["message"]["content"]
+
+@app.route("/", methods=["GET"])
+def home():
+    return "Saudabot is running ✅"
+
+@app.route("/", methods=["POST"])
+def webhook():
+    data = request.form
+    from_number = data.get("from")
+    message_body = data.get("body")
+
+    if message_body:
+        reply = get_gpt_reply(message_body)
+        send_message(from_number, reply)
+
+    return "ok", 200
+
+if __name__ == "__main__":
+    app.run()
