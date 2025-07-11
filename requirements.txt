@@ -2,3 +2,5 @@ Flask
 openai
 twilio
 python-dotenv
+selenium
+webdriver-manager
