@@ -45,15 +45,17 @@ def bot():
     send_whatsapp(response)
     return "OK"
 
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 def generate_response(message):
-    try:
-        completion = openai.ChatCompletion.create(
-            model="gpt-4",  # أو استخدم gpt-3.5-turbo إذا لم يكن لديك اشتراك GPT-4
-            messages=[{"role": "user", "content": message}]
-        )
-        return completion.choices[0].message["content"]
-    except Exception as e:
-        return f"❌ خطأ من GPT: {e}"
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "أنت مساعد ذكي لخدمة السعودة، ساعد المستخدم."},
+            {"role": "user", "content": message}
+        ]
+    )
+    return response.choices[0].message.contentclient = OpenAI(api_key=OPENAI_API_KEY)
 
 def run_saudah_bot(code=None):
     try:
