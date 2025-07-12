@@ -27,7 +27,7 @@ app = Flask(__name__)
 def send_whatsapp(message):
     client.messages.create(
         from_="whatsapp:" + TWILIO_PHONE_NUMBER,
-        to=USER_PHONE_NUMBER,
+        to="whatsapp:" + USER_PHONE_NUMBER,
         body=message
     )
 
