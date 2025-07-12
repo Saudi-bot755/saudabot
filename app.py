@@ -48,15 +48,14 @@ def bot():
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 def generate_response(message):
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "أنت مساعد ذكي لخدمة السعودة، ساعد المستخدم."},
-            {"role": "user", "content": message}
-        ]
-    )
-    return response.choices[0].message.contentclient = OpenAI(api_key=OPENAI_API_KEY)
-
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-4",  # أو gpt‑3.5‑turbo
+            messages=[{"role": "user", "content": message}]
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"❌ خطأ من GPT: {e}"
 def run_saudah_bot(code=None):
     try:
         options = Options()
