@@ -1,11 +1,11 @@
 from flask import Flask, request
 import os
-import openai
 from twilio.rest import Client
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from openai import OpenAI
 
-# ─── إعداد المتغيرات من البيئة ────────────────────────────────────────────────
+# ─── إعداد المتغيرات من البيئة ───────────────────────────────────────────────
 OPENAI_API_KEY       = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID   = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN    = os.getenv("TWILIO_AUTH_TOKEN")
@@ -15,8 +15,8 @@ USER_PHONE_NUMBER    = os.getenv("USER_PHONE_NUMBER")
 # ─── تهيئة Flask ─────────────────────────────────────────────────────────────
 app = Flask(__name__)
 
-# ─── تهيئة OpenAI (الإصدار >=1.0.0) ────────────────────────────────────────
-openai.api_key = OPENAI_API_KEY
+# ─── تهيئة OpenAI client (الإصدار 1.0+) ────────────────────────────────────
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ─── تهيئة Twilio ──────────────────────────────────────────────────────────
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -44,28 +44,28 @@ def bot():
     send_whatsapp(reply)
     return "OK"
 
-# ─── دالة توليد رد باستخدام OpenAI ChatCompletion ──────────────────────────
+# ─── دالة توليد رد باستخدام OpenAI الجديدة ─────────────────────────────────
 def generate_response(user_text: str) -> str:
     try:
-        completion = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",  # أو "gpt-4" إذا متاح
+        result = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",  # أو "gpt-4" حسب اشتراكك
             messages=[
                 {"role": "system", "content": "أنت مساعد ذكي متخصص في إجراءات السعودة."},
                 {"role": "user",   "content": user_text}
             ]
         )
-        return completion.choices[0].message.content.strip()
+        return result.choices[0].message.content.strip()
     except Exception as e:
         return f"❌ خطأ من GPT: {e}"
 
-# ─── بوت الأتمتة باستخدام Selenium (اختياري) ────────────────────────────────
+# ─── (اختياري) بوت الأتمتة عبر Selenium ────────────────────────────────────
 def run_saudah_bot(code: str = None):
     try:
         opts = Options()
         opts.add_argument("--headless")
         driver = webdriver.Chrome(options=opts)
         driver.get("https://www.gosi.gov.sa/GOSIOnline/")
-        # هنا: أضف خطوات Selenium لتسجيل الدخول واختيار "أعمال" وإرسال الكود
+        # أضف هنا خطوات Selenium لتسجيل الدخول وآلية السعودة
     except Exception as e:
         print(f"❌ خطأ أثناء تشغيل بوت السعودة: {e}")
 
