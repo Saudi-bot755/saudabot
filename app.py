@@ -15,7 +15,7 @@ USER_PHONE_NUMBER = os.getenv("USER_PHONE_NUMBER")
 # إعداد Flask
 app = Flask(__name__)
 
-# إعداد مفتاح OpenAI
+# إعداد OpenAI
 openai.api_key = OPENAI_API_KEY
 
 # إعداد Twilio
@@ -32,26 +32,25 @@ def send_whatsapp(message):
 # الصفحة الرئيسية
 @app.route("/", methods=["GET"])
 def home():
-    return "بوت السعودة يعمل بنجاح ✅"
+    return "✅ بوت السعودة يعمل بنجاح"
 
-# نقطة استقبال الرسائل من Twilio
+# Twilio نقطة استقبال الرسائل من
 @app.route("/bot", methods=["POST"])
 def bot():
     incoming_msg = request.values.get("Body", "").strip()
     if not incoming_msg:
         return "❌ لم يتم إرسال رسالة"
-    
     response = generate_response(incoming_msg)
     send_whatsapp(response)
     return "OK"
 
-# توليد رد من GPT
+# GPT توليد رد من
 def generate_response(message):
     try:
         completion = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "أنت مساعد ذكي لبوت السعودة."},
+                {"role": "system", "content": "أنت مساعد ذكي"},
                 {"role": "user", "content": message}
             ]
         )
@@ -65,9 +64,11 @@ def run_saudah_bot(code=None):
         options = Options()
         options.add_argument("--headless")
         driver = webdriver.Chrome(options=options)
-        driver.get("https://www.gosi.gov.sa/GOSIOnline/Login")
+        driver.get("https://www.gosi.gov.sa/GOSIOnline/")
 
-        # 👇 تابع كتابة أوامر Selenium هنا لتسجيل الدخول وتنفيذ السعودة
+        # 👇 تابع كتابة أوامر Selenium هنا
+        # مثال:
+        # driver.find_element(By.XPATH, "xpath هنا").click()
 
     except Exception as e:
-        print("❌ خطأ أثناء تشغيل بوت السعودة:", e)
+        print(f"❌ خطأ أثناء تشغيل بوت السعودة: {e}")
