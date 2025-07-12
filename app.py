@@ -1,52 +1,83 @@
-import os from flask import Flask, request from twilio.twiml.messaging_response import MessagingResponse from selenium import webdriver from selenium.webdriver.chrome.options import Options from webdriver_manager.chrome import ChromeDriverManager import openai
+from flask import Flask, request
+from twilio.rest import Client
+from twilio.twiml.messaging_response import MessagingResponse
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+import openai
+import os
+from dotenv import load_dotenv
 
-تحميل متغيرات البيئة
+load_dotenv()
 
-from dotenv import load_dotenv load_dotenv()
+# Twilio
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+USER_PHONE_NUMBER = os.getenv("USER_PHONE_NUMBER")
+client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-app = Flask(name)
+# OpenAI
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
 
-مفاتيح API
+# Flask
+app = Flask(__name__)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") openai.api_key = OPENAI_API_KEY
+def send_whatsapp(message):
+    client.messages.create(
+        from_="whatsapp:" + TWILIO_PHONE_NUMBER,
+        to=USER_PHONE_NUMBER,
+        body=message
+    )
 
-IDENTITY = {} CODE_STAGE = {}
+@app.route("/", methods=["GET"])
+def home():
+    return "✅ بوت السعودة يعمل بنجاح!"
 
-@app.route("/", methods=["POST"]) def whatsapp(): incoming_msg = request.values.get('Body', '').strip() from_number = request.values.get('From', '')
+@app.route("/bot", methods=["POST"])
+def bot():
+    incoming_msg = request.values.get("Body", "").strip()
+    if not incoming_msg:
+        return "🚫 لم يتم إرسال رسالة!"
 
-response = MessagingResponse()
-msg = response.message()
+    response = generate_response(incoming_msg)
+    send_whatsapp(response)
+    return "OK"
 
-if from_number not in IDENTITY:
-    msg.body("👤 من فضلك أرسل رقم الهوية وكلمة المرور مفصولة بمسافة مثل: \n1234567890 secret")
-    IDENTITY[from_number] = "pending"
-elif IDENTITY[from_number] == "pending":
-    if ' ' in incoming_msg:
-        id_number, password = incoming_msg.split(' ', 1)
-        IDENTITY[from_number] = {'id': id_number, 'password': password}
-        msg.body("✅ تم استلام الهوية وكلمة المرور. الآن أرسل كود التحقق الذي وصلك")
-        CODE_STAGE[from_number] = "waiting"
-    else:
-        msg.body("❗الرجاء إرسال الهوية وكلمة المرور بهذا الشكل: \n1234567890 secret")
-elif CODE_STAGE.get(from_number) == "waiting":
-    code = incoming_msg
-    creds = IDENTITY[from_number]
-    run_saudabot(creds['id'], creds['password'], code)
-    msg.body("✅ تم تنفيذ السعودة بنجاح. ✅\n\n📷 سيتم إرسال صورة إثبات بعد قليل.")
-    del IDENTITY[from_number]
-    del CODE_STAGE[from_number]
-else:
-    msg.body("🤖 مرحبًا بك في بوت السعودة. أرسل رقم الهوية وكلمة المرور أولًا.")
+def generate_response(message):
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-4",  # أو استخدم gpt-3.5-turbo إذا لم يكن لديك اشتراك GPT-4
+            messages=[{"role": "user", "content": message}]
+        )
+        return completion.choices[0].message["content"]
+    except Exception as e:
+        return f"❌ خطأ من GPT: {e}"
 
-return str(response)
+def run_saudah_bot(code=None):
+    try:
+        options = Options()
+        options.add_argument("--headless")
+        driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
 
-def run_saudabot(id_number, password, code): chrome_options = Options() chrome_options.add_argument("--headless") chrome_options.add_argument("--no-sandbox") chrome_options.add_argument("--disable-dev-shm-usage")
+        driver.get("https://www.gosi.gov.sa/GOSIOnline/")
 
-driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
+        # ⏳ انتظر الضغط على "تسجيل الدخول" ثم "أعمال"
+        # يمكن استخدام selenium للعثور على العناصر والضغط
+        # مثال:
+        # driver.find_element(By.XPATH, "...").click()
 
-try:
-    driver.get("https://www.gosi.gov.sa/")
+        if code:
+            # أكمل الكود في صفحة التحقق
+            pass
 
-    #
+        # أكمل باقي خطوات السعودة تلقائياً
+        # إضافة مشترك، الراتب 4000، المسمى محاسب
 
+        driver.quit()
+    except Exception as e:
+        send_whatsapp(f"🚨 حدث خطأ أثناء تنفيذ البوت: {e}")
 
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
