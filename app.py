@@ -45,11 +45,12 @@ def bot():
     send_whatsapp(response)
     return "OK"
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY
 
 def generate_response(message):
     try:
-        completion = openai.ChatCompletion.create(
+        completion =
+    openai.ChatCompletion.create(
             model="gpt-4",  # أو gpt‑3.5‑turbo
             messages=[{"role": "user", "content": message}]
         )
