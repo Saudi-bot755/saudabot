@@ -46,12 +46,17 @@ def bot():
 
 # ─── دالة توليد رد باستخدام GPT ─────────────────────────────────────────
 def generate_response(message):
+from openai import OpenAI
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+def generate_response(message):
     try:
-        completion = openai.ChatCompletion.create(
-            model="gpt-4",  # أو "gpt-3.5-turbo" إذا لم يكن لديك وصول لـ GPT-4
+        completion = client.chat.completions.create(
+            model="gpt-4",
             messages=[
-                {"role": "system", "content": "أنت مساعد ذكي للمستخدمين."},
-                {"role": "user",   "content": message}
+                {"role": "system", "content": "أنت مساعد ذكي."},
+                {"role": "user", "content": message}
             ]
         )
         return completion.choices[0].message.content
