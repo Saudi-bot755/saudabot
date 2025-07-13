@@ -1,107 +1,112 @@
+import os
 from flask import Flask, request
 from twilio.rest import Client
+import openai
+from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import WebDriverException
-import os, time, datetime
 
-# ─── تحميل البيانات من ملف env ─────────────────────
+# —— Load env vars ——
+load_dotenv()
+OPENAI_API_KEY      = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
-USER_PHONE_NUMBER = os.getenv("USER_PHONE_NUMBER")
+TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER= os.getenv("TWILIO_PHONE_NUMBER")
+USER_PHONE_NUMBER  = os.getenv("USER_PHONE_NUMBER")
 
-# ─── تهيئة Flask و Twilio ──────────────────────────
+# —— Init clients ——
+openai.api_key = OPENAI_API_KEY
+client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+# —— Flask setup ——
 app = Flask(__name__)
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# ─── دالة إرسال واتساب ─────────────────────────────
-def send_whatsapp(message, media_path=None):
-    data = {
-        "from_": f"whatsapp:{TWILIO_PHONE_NUMBER}",
-        "to": f"whatsapp:{USER_PHONE_NUMBER}",
-        "body": message
-    }
-    if media_path:
-        data["media_url"] = media_path
-    twilio_client.messages.create(**data)
+# —— Helper: Send WhatsApp ——
+def send_whatsapp(message: str):
+    client.messages.create(
+        from_=f"whatsapp:{TWILIO_PHONE_NUMBER}",
+        to=  f"whatsapp:{USER_PHONE_NUMBER}",
+        body=message
+    )
 
-# ─── تسجيل الدخول وتنفيذ السعودة ───────────────────
-def run_saudah_bot(code=None):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    screenshot_file = f"screenshots/screenshot_{timestamp}.png"
+# —— Helper: Extract error from insurance site ——
+def check_for_error_message(html: str) -> str | None:
+    soup = BeautifulSoup(html, "html.parser")
+    err = soup.find("div", class_="error-message")
+    return err.text.strip() if err else None
 
-    try:
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        driver = webdriver.Chrome(options=options)
-
-        driver.get("https://www.gosi.gov.sa/GOSIOnline/")
-        time.sleep(3)
-
-        # مثال تسجيل الدخول (عدّل حسب موقع التأمينات الفعلي)
-        driver.find_element(By.LINK_TEXT, "تسجيل الدخول").click()
-        time.sleep(2)
-        driver.find_element(By.LINK_TEXT, "أعمال").click()
-        time.sleep(2)
-        driver.find_element(By.ID, "username").send_keys("1234567890")
-        driver.find_element(By.ID, "password").send_keys("mypassword")
-        driver.find_element(By.ID, "login").click()
-
-        if code:
-            time.sleep(2)
-            driver.find_element(By.ID, "otp").send_keys(code)
-            driver.find_element(By.ID, "submit").click()
-
-        time.sleep(5)
-        # تنفيذ خطوات السعودة ...
-        # إرسال الوظيفة والراتب
-
-        with open("saudat_log.txt", "a") as log:
-            log.write(f"{timestamp} | سعودة تمت بنجاح\n")
-
-        driver.save_screenshot(screenshot_file)
-        send_whatsapp("✅ تم تنفيذ السعودة بنجاح. جاري انتظار الطلب القادم...", screenshot_file)
-
-    except WebDriverException as e:
-        send_whatsapp(f"❌ خطأ في تنفيذ العملية: {str(e)}")
-        try:
-            driver.save_screenshot(screenshot_file)
-            send_whatsapp("📸 هذا سكرين شوت الخطأ:", screenshot_file)
-        except:
-            pass
-    finally:
-        try:
-            driver.quit()
-        except:
-            pass
-
-# ─── نقطة البداية / الصفحة الرئيسية ─────────────────
+# —— Health check endpoint ——
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Saudabot شغال بنجاح"
+    return "✅ Bot is running", 200
 
-# ─── استقبال رسائل واتساب ───────────────────────────
+# —— Start flow: user sends “سعودة” أو “ابدأ” ——
 @app.route("/bot", methods=["POST"])
 def bot():
-    msg = request.values.get("Body", "").strip()
-    if not msg:
-        return "❌ لم يتم استقبال رسالة"
-    if msg.lower().startswith("كود"):
-        code = msg.replace("كود", "").strip()
-        run_saudah_bot(code=code)
-        return "✅ تم استقبال الكود والتنفيذ"
-    elif msg.lower() in ["ابدأ", "سعودة", "تشغيل"]:
-        send_whatsapp("🔐 أرسل كود التحقق برسالة تبدأ بكلمة: كود 123456")
-        return "🔔 بانتظار كود التحقق"
-    else:
-        send_whatsapp("❗ أرسل 'سعودة' أو 'ابدأ' لبدء العملية، أو 'كود 123456'")
-        return "🟢 تم"
+    msg = request.values.get("Body", "").strip().lower()
+    if msg not in ["سعودة", "ابدأ"]:
+        send_whatsapp("❌ أرسل 'سعودة' أو 'ابدأ' للبدء.")
+        return "OK", 200
 
-# ─── تشغيل السيرفر ──────────────────────────────────
+    send_whatsapp(
+        "🔒 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n"
+        "1234567890#mypassword"
+    )
+    return "OK", 200
+
+# —— Receive credentials ——
+@app.route("/credentials", methods=["POST"])
+def credentials():
+    data = request.values.get("Body", "").strip()
+    if "#" not in data:
+        send_whatsapp("❌ الصيغة غير مفهومة. استخدم: ID#PASSWORD")
+        return "OK", 200
+
+    user_id, pwd = data.split("#", 1)
+    send_whatsapp("⏳ جاري تسجيل الدخول...")
+
+    # —— Selenium login ——
+    options = Options()
+    options.add_argument("--headless")
+    driver = webdriver.Chrome(options=options)
+    try:
+        driver.get("https://example-insurance-portal.com/login")
+        driver.find_element_by_id("id_input").send_keys(user_id)
+        driver.find_element_by_id("pwd_input").send_keys(pwd)
+        driver.find_element_by_id("submit_btn").click()
+        html = driver.page_source
+        err_msg = check_for_error_message(html)
+        if err_msg:
+            send_whatsapp(f"⚠️ فشل الدخول: {err_msg}")
+        else:
+            send_whatsapp("✅ تم الدخول بنجاح! أرسل 'تحليل' لتحليل البيانات.")
+    except Exception as e:
+        send_whatsapp(f"❌ خطأ أثناء التصفح: {e}")
+    finally:
+        driver.quit()
+
+    return "OK", 200
+
+# —— AI analysis endpoint ——
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    send_whatsapp("⏳ جاري معالجة البيانات عبر AI...")
+    content = request.values.get("Body", "")
+    try:
+        resp = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "أنت مساعد لتحليل بيانات التأمينات."},
+                {"role": "user",   "content": "حلل هذا النص وقدم ملخصاً:\n" + content}
+            ]
+        )
+        summary = resp.choices[0].message.content.strip()
+        send_whatsapp(f"🤖 تحليل AI:\n{summary}")
+    except Exception as e:
+        send_whatsapp(f"❌ خطأ من AI: {e}")
+    return "OK", 200
+
 if __name__ == "__main__":
-    os.makedirs("screenshots", exist_ok=True)
-    app.run(debug=False, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
