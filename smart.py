@@ -1,45 +1,94 @@
-from flask import Flask, request
-from twilio.twiml.messaging_response import MessagingResponse
+from flask import Flask, request, jsonify
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+import time
 import requests
-import json
-from datetime import datetime
+import os
+from twilio.rest import Client
 
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def home():
-    return "بوت السعودة يعمل ✅"
+@app.route("/saudabot-login", methods=["POST"])
+def saudabot_login():
+    data = request.get_json()
+    national_id = data.get("id")
+    password = data.get("password")
+    sender = data.get("sender")  # رقم واتساب
 
-@app.route("/bot", methods=["POST"])
-def bot():
-    incoming_msg = request.values.get("Body", "").strip().lower()
-    sender = request.values.get("From", "")
+    # إعداد متصفح Chrome بدون واجهة
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    driver = webdriver.Chrome(options=options)
 
-    resp = MessagingResponse()
-    msg = resp.message()
+    try:
+        driver.get("https://www.gosi.gov.sa/GOSIOnline/")
+        driver.find_element(By.LINK_TEXT, "تسجيل الدخول").click()
+        time.sleep(2)
 
-    if "سعوده" in incoming_msg:
-        msg.body("👋 أهلًا بك! الرجاء إرسال رقم الهوية وكلمة المرور بهذة الصيغة:
-1234567890, كلمة_المرور")
-    elif "," in incoming_msg:
+        driver.find_element(By.XPATH, "//button[contains(text(), 'أعمال')]").click()
+        time.sleep(2)
+
+        driver.find_element(By.ID, "username").send_keys(national_id)
+        driver.find_element(By.ID, "password").send_keys(password)
+        driver.find_element(By.ID, "login-button").click()
+
+        time.sleep(3)
+
+        send_whatsapp(sender, "📲 أرسل الآن كود التحقق الذي وصلك من التأمينات:")
+
+        code = wait_for_code(national_id)
+
+        driver.find_element(By.ID, "otp").send_keys(code)
+        driver.find_element(By.ID, "verify-button").click()
+
+        time.sleep(3)
+
+        screenshot_path = f"screenshot_{national_id}.png"
+        driver.save_screenshot(screenshot_path)
+
+        send_whatsapp(sender, f"✅ تم تسجيل سعودي جديد:\nالمهنة: محاسب\nالراتب: 4000 ريال")
+        send_whatsapp(sender, f"📸 هذه صورة الشاشة:", file_path=screenshot_path)
+
+        return jsonify({"status": "done"}), 200
+
+    except Exception as e:
+        send_whatsapp(sender, f"❌ فشل التسجيل: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        driver.quit()
+
+def wait_for_code(id_number):
+    for i in range(60):
         try:
-            national_id, password = [x.strip() for x in incoming_msg.split(",")]
-            data = {
-                "id": national_id,
-                "password": password,
-                "sender": sender
-            }
-            r = requests.post("http://localhost:7000/start", json=data)
-            if r.status_code == 200:
-                msg.body("📩 تم استلام البيانات، وجاري تنفيذ عملية السعودة...")
-            else:
-                msg.body("⚠️ لم يتم استقبال البيانات بشكل صحيح، حاول لاحقًا.")
-        except Exception as e:
-            msg.body(f"❌ خطأ في معالجة البيانات: {e}")
-    else:
-        msg.body("❗ أرسل كلمة "سعوده" للبدء.")
+            with open(f"codes/{id_number}.txt", "r") as f:
+                return f.read().strip()
+        except:
+            time.sleep(3)
+    return ""
 
-    return str(resp)
+def send_whatsapp(to, body, file_path=None):
+    account_sid = os.getenv("TWILIO_SID")
+    auth_token = os.getenv("TWILIO_AUTH")
+    from_number = "whatsapp:+14155238886"
+
+    client = Client(account_sid, auth_token)
+
+    message_data = {
+        "body": body,
+        "from_": from_number,
+        "to": to
+    }
+
+    if file_path:
+        message_data["media_url"] = [upload_temp_image(file_path)]
+
+    client.messages.create(**message_data)
+
+def upload_temp_image(file_path):
+    return "https://your-server.com/screenshots/" + file_path
 
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    app.run(port=8000)
