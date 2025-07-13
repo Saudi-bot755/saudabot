@@ -1,70 +1,93 @@
 import os
 from flask import Flask, request
 from twilio.rest import Client
-import openai
 from dotenv import load_dotenv
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import time
 
-# ─── تحميل متغيرات البيئة من ملف .env ────────────────────────────────────────
+# تحميل متغيرات البيئة
 load_dotenv()
 
-# ─── إعداد المفاتيح والمتغيرات ───────────────────────────────────────────────
-# رابط الـ API (خاص بـ OpenRouter، أو يمكنك حذفه إذا كنت تستخدم api.openai.com مباشرة)
-OPENAI_API_BASE    = os.getenv("OPENAI_API_BASE")  
-OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY")
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER= os.getenv("TWILIO_PHONE_NUMBER")
-USER_PHONE_NUMBER  = os.getenv("USER_PHONE_NUMBER")
+# إعداد مفاتيح Twilio
+twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
+twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
+user_number = os.getenv("USER_PHONE_NUMBER")
 
-# ─── تهيئة عميل OpenAI (v0.28.x) ────────────────────────────────────────────
-openai.api_key = OPENAI_API_KEY
-if OPENAI_API_BASE:
-    openai.api_base = OPENAI_API_BASE
+client = Client(twilio_sid, twilio_token)
 
-# ─── تهيئة عميل Twilio ───────────────────────────────────────────────────────
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-
-# ─── تهيئة Flask ─────────────────────────────────────────────────────────────
 app = Flask(__name__)
 
-# ─── دالة لإرسال رسالة واتساب عبر Twilio ────────────────────────────────────
-def send_whatsapp(message: str):
-    twilio_client.messages.create(
-        from_ = f"whatsapp:{TWILIO_PHONE_NUMBER}",
-        to    = f"whatsapp:{USER_PHONE_NUMBER}",
-        body  = message
+# دالة لإرسال رسالة واتساب عبر Twilio
+def send_whatsapp(msg):
+    client.messages.create(
+        from_="whatsapp:" + twilio_number,
+        to="whatsapp:" + user_number,
+        body=msg
     )
 
-# ─── الصفحة الرئيسية للاختبار ────────────────────────────────────────────────
+# دالة تنفيذ الدخول لموقع التأمينات واكتشاف الأخطاء
+
+def process_saudah(id_number, password):
+    try:
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+
+        driver = webdriver.Chrome(options=options)
+        driver.get("https://www.gosi.gov.sa/GOSIOnline/" )
+
+        # الانتقال لتسجيل الدخول
+        WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.LINK_TEXT, "تسجيل الدخول"))).click()
+        WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.LINK_TEXT, "أعمال"))).click()
+
+        # إدخال البيانات
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "loginId"))).send_keys(id_number)
+        driver.find_element(By.ID, "password").send_keys(password)
+        driver.find_element(By.ID, "loginButton").click()
+
+        # التحقق من وجود خطأ
+        time.sleep(3)
+        if "خطأ" in driver.page_source or "المعلومات غير صحيحة" in driver.page_source:
+            driver.quit()
+            return "❌ فشل تسجيل الدخول، تأكد من رقم الهوية أو كلمة المرور."
+
+        # لو نجح الدخول
+        driver.quit()
+        return "✅ تم تسجيل الدخول بنجاح! مستعد لإكمال إجراءات السعودة."
+
+    except Exception as e:
+        return f"⚠️ حدث خطأ غير متوقع: {str(e)}"
+
+# نقطة البداية للتأكد من عمل البوت
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Saudabot is running!"
+    return "🤖 Saudabot يعمل بنجاح", 200
 
-# ─── نقطة استقبال رسائل ويبهوك /bot من Twilio ────────────────────────────────
+# نقطة استقبال رسالة من المستخدم (واتساب)
 @app.route("/bot", methods=["POST"])
 def bot():
-    incoming = request.values.get("Body", "").strip()
-    if not incoming:
-        return "❌ No text received", 200
+    msg = request.values.get("Body", "").strip()
+    if msg.lower().startswith("سعودة"):
+        send_whatsapp("📋 أرسل رقم الهوية متبوعًا بكلمة المرور بهذا الشكل:\nمثال: 1234567890#mypassword")
+        return "OK", 200
 
-    # توليد رد من ChatCompletion
-    try:
-        resp = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",        # أو "gpt-4" حسب اشتراكك
-            messages=[
-                {"role": "system", "content": "أنت مساعد ذكي متخصص في السعودة."},
-                {"role": "user",   "content": incoming}
-            ]
-        )
-        reply = resp.choices[0].message.content.strip()
-    except Exception as e:
-        reply = f"❌ GPT Error: {e}"
+    if "#" in msg:
+        parts = msg.split("#")
+        if len(parts) == 2:
+            id_number = parts[0].strip()
+            password = parts[1].strip()
+            result = process_saudah(id_number, password)
+            send_whatsapp(result)
+            return "OK", 200
 
-    # إرساله عبر واتساب
-    send_whatsapp(reply)
+    send_whatsapp("❌ صيغة غير مفهومة. أرسل \"سعودة\" للبدء.")
     return "OK", 200
 
-# ─── تشغيل التطبيق ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=False, host="0.0.0.0", port=5000)
