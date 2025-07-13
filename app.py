@@ -19,7 +19,10 @@ USER_PHONE_NUMBER   = os.getenv("USER_PHONE_NUMBER")
 app = Flask(__name__)
 
 # ─── تهيئة عميل OpenAI (>=1.0.0) ────────────────────────────────────────────
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+openai_client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    base_url=os.getenv("OPENAI_API_BASE")  # 🟢 يقرأ من .env مباشرة
+)
 
 # ─── تهيئة عميل Twilio ──────────────────────────────────────────────────────
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
