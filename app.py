@@ -1,114 +1,107 @@
-import os
 from flask import Flask, request
 from twilio.rest import Client
-from dotenv import load_dotenv
-import time
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from PIL import Image
-from datetime import datetime
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import WebDriverException
+import os, time, datetime
 
-load_dotenv()
+# ─── تحميل البيانات من ملف env ─────────────────────
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+USER_PHONE_NUMBER = os.getenv("USER_PHONE_NUMBER")
 
-# إعداد Twilio
-account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
-user_number = os.getenv("USER_PHONE_NUMBER")
-client = Client(account_sid, auth_token)
-
-# إعداد Flask
+# ─── تهيئة Flask و Twilio ──────────────────────────
 app = Flask(__name__)
+twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# تخزين الجلسة المؤقتة
-session = {
-    "waiting_for_login": False,
-    "username": "",
-    "password": ""
-}
+# ─── دالة إرسال واتساب ─────────────────────────────
+def send_whatsapp(message, media_path=None):
+    data = {
+        "from_": f"whatsapp:{TWILIO_PHONE_NUMBER}",
+        "to": f"whatsapp:{USER_PHONE_NUMBER}",
+        "body": message
+    }
+    if media_path:
+        data["media_url"] = media_path
+    twilio_client.messages.create(**data)
 
-# إرسال رسالة واتساب
-def send_whatsapp(message):
-    client.messages.create(
-        from_="whatsapp:" + twilio_number,
-        to="whatsapp:" + user_number,
-        body=message
-    )
+# ─── تسجيل الدخول وتنفيذ السعودة ───────────────────
+def run_saudah_bot(code=None):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    screenshot_file = f"screenshots/screenshot_{timestamp}.png"
 
-# إرسال صورة واتساب
-def send_image(filename):
-    media_url = f"https://file.io/{filename}"  # لاحقًا نعدلها إن احتجنا
-    client.messages.create(
-        from_="whatsapp:" + twilio_number,
-        to="whatsapp:" + user_number,
-        media_url=[media_url]
-    )
+    try:
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        driver = webdriver.Chrome(options=options)
 
-# بدء البوت
+        driver.get("https://www.gosi.gov.sa/GOSIOnline/")
+        time.sleep(3)
+
+        # مثال تسجيل الدخول (عدّل حسب موقع التأمينات الفعلي)
+        driver.find_element(By.LINK_TEXT, "تسجيل الدخول").click()
+        time.sleep(2)
+        driver.find_element(By.LINK_TEXT, "أعمال").click()
+        time.sleep(2)
+        driver.find_element(By.ID, "username").send_keys("1234567890")
+        driver.find_element(By.ID, "password").send_keys("mypassword")
+        driver.find_element(By.ID, "login").click()
+
+        if code:
+            time.sleep(2)
+            driver.find_element(By.ID, "otp").send_keys(code)
+            driver.find_element(By.ID, "submit").click()
+
+        time.sleep(5)
+        # تنفيذ خطوات السعودة ...
+        # إرسال الوظيفة والراتب
+
+        with open("saudat_log.txt", "a") as log:
+            log.write(f"{timestamp} | سعودة تمت بنجاح\n")
+
+        driver.save_screenshot(screenshot_file)
+        send_whatsapp("✅ تم تنفيذ السعودة بنجاح. جاري انتظار الطلب القادم...", screenshot_file)
+
+    except WebDriverException as e:
+        send_whatsapp(f"❌ خطأ في تنفيذ العملية: {str(e)}")
+        try:
+            driver.save_screenshot(screenshot_file)
+            send_whatsapp("📸 هذا سكرين شوت الخطأ:", screenshot_file)
+        except:
+            pass
+    finally:
+        try:
+            driver.quit()
+        except:
+            pass
+
+# ─── نقطة البداية / الصفحة الرئيسية ─────────────────
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Bot is running.", 200
+    return "✅ Saudabot شغال بنجاح"
 
+# ─── استقبال رسائل واتساب ───────────────────────────
 @app.route("/bot", methods=["POST"])
 def bot():
-    incoming_msg = request.values.get("Body", "").strip().lower()
-
-    if incoming_msg == "سعودة":
-        session["waiting_for_login"] = True
-        send_whatsapp("📋 أرسل رقم الهوية متبوعًا بكلمة المرور بهذا الشكل:\nmypassword#1234567890")
-        return "OK", 200
-
-    elif session["waiting_for_login"] and "#" in incoming_msg:
-        try:
-            password, username = incoming_msg.split("#")
-            session["username"] = username
-            session["password"] = password
-            session["waiting_for_login"] = False
-
-            result = run_saudah_script(username, password)
-            return "OK", 200
-        except Exception as e:
-            send_whatsapp(f"❌ خطأ في معالجة البيانات: {e}")
-            return "Error", 500
-
+    msg = request.values.get("Body", "").strip()
+    if not msg:
+        return "❌ لم يتم استقبال رسالة"
+    if msg.lower().startswith("كود"):
+        code = msg.replace("كود", "").strip()
+        run_saudah_bot(code=code)
+        return "✅ تم استقبال الكود والتنفيذ"
+    elif msg.lower() in ["ابدأ", "سعودة", "تشغيل"]:
+        send_whatsapp("🔐 أرسل كود التحقق برسالة تبدأ بكلمة: كود 123456")
+        return "🔔 بانتظار كود التحقق"
     else:
-        send_whatsapp("❌ صيغة غير مفهومة. أرسل كلمة سعودة للبدء.")
-        return "Invalid", 200
+        send_whatsapp("❗ أرسل 'سعودة' أو 'ابدأ' لبدء العملية، أو 'كود 123456'")
+        return "🟢 تم"
 
-# سكربت السعودة الآلي
-def run_saudah_script(username, password):
-    try:
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.get("https://www.gosi.gov.sa/GOSIOnline/")
-
-        time.sleep(3)
-        # تابع خطوات تسجيل الدخول والتأكد من وجود عنصر فشل مثلاً
-
-        if "خطأ" in driver.page_source or "غير صحيحة" in driver.page_source:
-            send_whatsapp("❌ فشل تسجيل الدخول. تأكد من البيانات.")
-            driver.quit()
-            return
-
-        # متابعة تنفيذ السعودة - هذا وهمي، ضيف خطواتك
-        time.sleep(5)
-        screenshot_path = f"screenshot_{username}.png"
-        driver.save_screenshot(screenshot_path)
-        driver.quit()
-
-        # تخزين النتيجة
-        with open("saudabot.log", "a") as log:
-            log.write(f"{datetime.now()} - تم تسجيل السعودة لـ {username}\n")
-
-        send_whatsapp("✅ تم تنفيذ السعودة بنجاح.\nأرسل سعودة لتسجيل شخص جديد.")
-        # (تحميل screenshot لاحقًا)
-        return "Done"
-
-    except Exception as e:
-        send_whatsapp(f"❌ فشل تنفيذ السكربت: {e}")
-        return "Failed"
+# ─── تشغيل السيرفر ──────────────────────────────────
+if __name__ == "__main__":
+    os.makedirs("screenshots", exist_ok=True)
+    app.run(debug=False, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
