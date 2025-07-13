@@ -1,5 +1,5 @@
 flask
 requests
-twilio==8.10.0
-openai==0.28.1
+twilio
+openai
 selenium
