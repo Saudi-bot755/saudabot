@@ -1,4 +1,7 @@
-flask==2.3.3
-selenium==4.10.0
-twilio==8.4.0
+Flask==2.3.3
+twilio==8.10.0
+selenium==4.16.0
 python-dotenv==1.0.1
+requests==2.31.0
+tqdm==4.66.4
+aiohttp==3.9.5
