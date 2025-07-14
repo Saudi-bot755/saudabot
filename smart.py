@@ -6,12 +6,19 @@ import time
 import requests
 import os
 from twilio.rest import Client
+from flask import Flask, request
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return 'البوت يعمل ✅'
+    return 'البوت شغال ✅'
+
+@app.route('/bot', methods=['POST'])
+def bot_webhook():
+    data = request.json
+    print("📩 استلمنا رسالة:", data)
+    return 'تم ✅'
 @app.route("/saudabot-login", methods=["POST"])
 def saudabot_login():
     data = request.get_json()
