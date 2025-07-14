@@ -12,9 +12,32 @@ import openai
 
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return '✅ البوت شغال تمام'
+@app.route('/bot', methods=['POST'])
+def bot_webhook():
+    try:
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = request.form.to_dict()  # دعم Twilio
+        print("📩 رسالة جديدة:", data)
+
+        message = data.get("Body", "") or data.get("message", "")
+        sender = data.get("From", "") or data.get("sender", "")
+
+        # أرسل رد ترحيبي أو حسب الرسالة
+        if "سعوده" in message:
+            send_whatsapp(sender, "📋 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n1234567890*Pass123")
+        elif "*" in message:
+            # هنا يتم معالجة الهوية وكلمة المرور لاحقًا
+            send_whatsapp(sender, "⏳ جارٍ التسجيل، انتظر لحظة...")
+        else:
+            send_whatsapp(sender, "🤖 اكتب سعوده للبدء.")
+        
+        return jsonify({"msg": "✅ تم الاستلام"}), 200
+
+    except Exception as e:
+        print("❌ خطأ في /bot:", str(e))
+        return jsonify({"error": str(e)}), 400
 
 @app.route('/bot', methods=['POST'])
 def bot_webhook():
