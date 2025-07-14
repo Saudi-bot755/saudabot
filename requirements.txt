@@ -1,4 +1,5 @@
 flask
+selenium
 twilio
 requests
-selenium
+openai==0.28.1
