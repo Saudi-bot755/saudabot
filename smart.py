@@ -1,120 +1,103 @@
 import os
-import time
 import json
 import datetime
 import re
-import requests
 from flask import Flask, request, jsonify
 from twilio.rest import Client
-from pathlib import Path
-from PIL import Image
 import pytesseract
+from PIL import Image
+from pathlib import Path
 import openai
 
 app = Flask(__name__)
 TEMP_STORAGE = {}
 
-# إعداد مفتاح OpenAI من متغير البيئة
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-
 @app.route("/")
 def home():
     return "✅ البوت شغال بنجاح"
-@app.route('/bot', methods=['POST'])
-def bot_webhook():
-    if request.content_type != 'application/json':
-        return "Unsupported Media Type", 415
+
 @app.route("/bot", methods=["POST"])
 def bot_webhook():
+    if request.content_type != "application/json":
+        return "Unsupported Media Type", 415
+
     data = request.json
     msg = data.get("body", "").strip()
     sender = data.get("from")
 
-    # التحقق من وجود رسالة
-    if not msg:
-        return jsonify({"status": "no_message"})
-
-    # الرد على كلمة سعودة
-    if msg == "سعودة":
-        text = "✉️ أرسل رقم الهوية وكلمة المرور بالشكل التالي:\nالهوية*كلمة_المرور"
-        return send_whatsapp(sender, text)
-
-    # إذا كانت الرسالة تحتوي على هوية وكلمة مرور
+    # التحقق من التنسيق: رقم الهوية * كلمة المرور
     if "*" in msg:
         parts = [x.strip() for x in msg.split("*")]
         if len(parts) != 2:
-            return send_whatsapp(sender, "❌ تأكد من إدخال الهوية وكلمة المرور بشكل صحيح.")
+            return send_whatsapp(sender, "❌ التنسيق غير صحيح. ارسل الرقم وكلمة المرور بهذا الشكل:
+1234567890*Pass1234")
 
         national_id, password = parts
 
         if not national_id.isdigit() or len(national_id) != 10:
-            return send_whatsapp(sender, "❌ رقم الهوية غير صحيح.")
+            return send_whatsapp(sender, "❌ رقم الهوية يجب أن يكون 10 أرقام.")
 
         if not validate_password(password):
-            return send_whatsapp(sender, "❌ كلمة المرور يجب أن تحتوي على حرف كبير، حرف صغير، رقم، ورمز.")
+            return send_whatsapp(sender, "❌ كلمة المرور غير قوية. يجب أن تحتوي على حرف كبير وحروف صغيرة وأرقام.")
 
-        TEMP_STORAGE[sender] = {"id": national_id, "password": password, "step": "waiting_code"}
-        return send_whatsapp(sender, "🔐 أرسل الآن كود التحقق المكون من 4 أرقام")
+        TEMP_STORAGE[sender] = {
+            "id": national_id,
+            "password": password,
+            "step": "waiting_code"
+        }
+
+        return send_whatsapp(sender, "🔐 تم حفظ البيانات. أرسل كود التحقق الآن.")
 
     # التحقق من كود التحقق
     elif msg.isdigit() and len(msg) == 4:
-        if sender not in TEMP_STORAGE:
-            return send_whatsapp(sender, "❌ أرسل أولاً الهوية وكلمة المرور")
+        if sender not in TEMP_STORAGE or TEMP_STORAGE[sender]["step"] != "waiting_code":
+            return send_whatsapp(sender, "❗ أرسل الهوية وكلمة المرور أولاً.")
 
         TEMP_STORAGE[sender]["code"] = msg
         TEMP_STORAGE[sender]["step"] = "waiting_birth"
-        return send_whatsapp(sender, "📅 أرسل تاريخ ميلادك بالهجري (مثال: 1415/05/20) أو اكتب 'ميلادي' لتحويل التاريخ")
 
-    # تحويل الميلادي إلى هجري
-    elif "ميلادي" in msg:
-        return send_whatsapp(sender, "❗ أرسل تاريخ ميلادك بالهجري (مثال: 1415/05/20)")
+        return send_whatsapp(sender, "📅 أرسل تاريخ الميلاد الهجري بصيغة: 1410/01/01")
 
-    # إدخال تاريخ الميلاد
-    elif re.match(r"^\d{4}/\d{2}/\d{2}$", msg):
-        TEMP_STORAGE[sender]["birth"] = msg
-        TEMP_STORAGE[sender]["step"] = "completed"
-        return send_whatsapp(sender, "✅ تم استلام جميع البيانات بنجاح. يتم الآن تنفيذ عملية السعودة...")
+    # التحقق من تاريخ الميلاد الهجري
+    elif re.match(r"^14\d{2}/\d{2}/\d{2}$", msg):
+        if sender not in TEMP_STORAGE or TEMP_STORAGE[sender]["step"] != "waiting_birth":
+            return send_whatsapp(sender, "❗ أرسل كود التحقق أولاً.")
 
-    # رد ذكي باستخدام OpenAI
+        TEMP_STORAGE[sender]["birth_date"] = msg
+        TEMP_STORAGE[sender]["step"] = "processing"
+
+        # استكمال التسجيل هنا...
+        return send_whatsapp(sender, "🛠️ جارٍ التسجيل في التأمينات...")
+
     else:
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "أنت مساعد ذكي يرد على استفسارات السعودة فقط."},
-                    {"role": "user", "content": msg},
-                ]
-            )
-            reply = response.choices[0].message.content
-            return send_whatsapp(sender, reply)
-        except Exception as e:
-            return send_whatsapp(sender, f"حدث خطأ أثناء الاتصال بـ OpenAI: {e}")
+        # الذكاء الاصطناعي للردود العامة
+        response = ask_openai(msg)
+        return send_whatsapp(sender, response)
 
     return jsonify({"status": "done"})
 
-def validate_password(password):
-    return (
-        len(password) >= 8 and
-        re.search(r"[A-Z]", password) and
-        re.search(r"[a-z]", password) and
-        re.search(r"[0-9]", password) and
-        re.search(r"[^A-Za-z0-9]", password)
-    )
-
-def send_whatsapp(to, body):
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("WHATSAPP_NUMBER")
-
-    client = Client(account_sid, auth_token)
-
-    message = client.messages.create(
-        body=body,
-        from_=f"whatsapp:{from_number}",
-        to=f"whatsapp:{to}"
-    )
+def send_whatsapp(to, message):
+    print(f"[رسالة إلى {to}]: {message}")
     return jsonify({"status": "sent"})
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", 
-    port=int(os.environ.get("PORT", 10000)))
+def validate_password(password):
+    return (
+        len(password) >= 8
+        and re.search(r"[A-Z]", password)
+        and re.search(r"[a-z]", password)
+        and re.search(r"\d", password)
+    )
+
+def ask_openai(prompt):
+    try:
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        chat = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "أنت مساعد ذكي لبوت سعودة."},
+                {"role": "user", "content": prompt},
+            ]
+        )
+        return chat.choices[0].message.content
+    except Exception as e:
+        return "⚠️ حدث خطأ في الاتصال بالذكاء الاصطناعي."
