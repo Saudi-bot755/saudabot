@@ -7,6 +7,7 @@ import os, time, json, datetime
 from twilio.rest import Client
 import pytesseract
 from PIL import Image
+from pathlib import Path
 
 app = Flask(__name__)
 
@@ -30,6 +31,7 @@ def saudabot_login():
     chrome_options = Options()
     chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
     driver = webdriver.Chrome(options=chrome_options)
 
     try:
@@ -56,14 +58,14 @@ def saudabot_login():
         send_whatsapp(sender, "✅ تم تسجيل سعودي جديد: المهنة محاسب، الراتب 4000 ريال")
         send_whatsapp(sender, "📸 صورة الشاشة:", file_path=img_path)
         log_action(national_id, "تمت العملية بنجاح")
+
         return jsonify({"status": "done"}), 200
 
     except Exception as e:
         img_path = f"screenshots/error_{national_id}.png"
         driver.save_screenshot(img_path)
         text = extract_text(img_path)
-        send_whatsapp(sender, f"❌ فشل التسجيل:
-{text}")
+        send_whatsapp(sender, f"❌ فشل التسجيل:\n{text}")
         send_whatsapp(sender, "📸 صورة المشكلة:", file_path=img_path)
         log_action(national_id, f"خطأ: {text}")
         return jsonify({"error": str(e)}), 500
@@ -87,7 +89,8 @@ def send_whatsapp(to, body, file_path=None):
     client = Client(sid, token)
     data = {"body": body, "from_": from_number, "to": to}
     if file_path:
-        data["media_url"] = [f"https://your-server.com/screenshots/{Path(file_path).name}"]
+        filename = Path(file_path).name
+        data["media_url"] = [f"https://your-server.com/screenshots/{filename}"]
     client.messages.create(**data)
 
 def extract_text(img_path):
@@ -101,9 +104,8 @@ def log_action(national_id, msg):
     log = {"id": national_id, "msg": msg, "time": datetime.datetime.now().isoformat()}
     with open("logs.json", "a", encoding="utf-8") as f:
         json.dump(log, f, ensure_ascii=False)
-        f.write(",
-")
+        f.write(",\n")
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port,threaded=True)
+    app.run(host="0.0.0.0", port=port, threaded=True)
