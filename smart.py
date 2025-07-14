@@ -101,3 +101,6 @@ def ask_openai(prompt):
         return chat.choices[0].message.content
     except Exception as e:
         return "⚠️ حدث خطأ في الاتصال بالذكاء الاصطناعي."
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
