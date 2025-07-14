@@ -101,6 +101,7 @@ def upload_temp_image(file_path):
     return "https://your-server.com/screenshots/" + file_path
 
 if __name__ == "__main__":
-   port = int(os.environ.get("PORT", 
-                             5000))
-  app.run(host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
