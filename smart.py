@@ -3,65 +3,47 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import WebDriverException
-import os, time, json, datetime, re
+import os, time, json, datetime
 from twilio.rest import Client
-import pytesseract
 from PIL import Image
-from pathlib import Path
+import pytesseract
+from convertdate import islamic, gregorian
+import re
 
 app = Flask(__name__)
-TEMP_STORAGE = {}
 
 @app.route('/')
 def home():
-    return '✅ البوت شغال بنجاح'
+    return '✅ البوت شغال تمام'
 
 @app.route('/bot', methods=['POST'])
 def bot_webhook():
     data = request.json
-    msg = data.get("body", "").strip()
-    sender = data.get("from")
+    print("📩 رسالة جديدة:", data)
+    return jsonify({"msg": "تم استلام الرسالة ✅"})
 
-    # إذا كان يحتوي على فاصلة (هوية + كلمة مرور)
-    if "," in msg:
-        parts = [x.strip() for x in msg.split(",")]
-        if len(parts) != 2:
-            return send_whatsapp(sender, "❌ تأكد من كتابة الهوية وكلمة المرور بهذا الشكل:\n1234567890, MyPass123")
+@app.route('/saudabot-login', methods=['POST'])
+def saudabot_login():
+    data = request.get_json()
+    national_id = data.get("id")
+    password = data.get("password")
+    code = data.get("code")
+    birth_date = data.get("birth_date")
+    sender = data.get("sender")
 
-        national_id, password = parts
-        if not national_id.isdigit() or len(national_id) != 10:
-            return send_whatsapp(sender, "❌ رقم الهوية غير صحيح. يجب أن يكون 10 أرقام.")
+    # تحويل التاريخ إذا كان ميلادي
+    if re.search(r'\d{4}-\d{2}-\d{2}', birth_date):
+        try:
+            y, m, d = map(int, birth_date.split('-'))
+            hijri = islamic.from_gregorian(y, m, d)
+            birth_date = f"{hijri[2]:02d}/{hijri[1]:02d}/{hijri[0]}"
+        except:
+            birth_date = birth_date  # يبقى كما هو إذا فشل التحويل
 
-        if not validate_password(password):
-            return send_whatsapp(sender, "❌ كلمة المرور يجب أن تحتوي على حرف كبير وحرف صغير ورقم.")
-
-        TEMP_STORAGE[sender] = {"id": national_id, "password": password}
-        send_whatsapp(sender, "🔐 جارٍ التسجيل... أرسل كود التحقق المكوّن من 4 أرقام")
-        return jsonify({"status": "waiting_code"})
-
-    # إذا كان كود تحقق
-    elif msg.isdigit() and len(msg) == 4:
-        if sender not in TEMP_STORAGE:
-            return send_whatsapp(sender, "⚠️ أرسل الهوية وكلمة المرور أولاً قبل كود التحقق.")
-
-        user_data = TEMP_STORAGE[sender]
-        code_file = f"codes/{user_data['id']}.txt"
-        with open(code_file, "w") as f:
-            f.write(msg)
-
-        send_whatsapp(sender, "✅ تم استلام الكود... جاري تنفيذ السعودة")
-        start_saudah(user_data["id"], user_data["password"], sender)
-        return jsonify({"status": "processing"})
-
-    # أي رسالة أخرى
-    else:
-        return send_whatsapp(sender, "✉️ أرسل الهوية وكلمة المرور بهذا الشكل:\n1234567890, MyPass123")
-
-# تنفيذ التسجيل في التأمينات
-def start_saudah(national_id, password, sender):
     chrome_options = Options()
     chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
     driver = webdriver.Chrome(options=chrome_options)
 
     try:
@@ -74,74 +56,57 @@ def start_saudah(national_id, password, sender):
         driver.find_element(By.ID, "password").send_keys(password)
         driver.find_element(By.ID, "login-button").click()
         time.sleep(3)
-
-        code = wait_for_code(national_id)
         driver.find_element(By.ID, "otp").send_keys(code)
         driver.find_element(By.ID, "verify-button").click()
-        time.sleep(3)
+        time.sleep(5)
 
-        ### 👇👇👇 تنفيذ السعودة 👇👇👇
-        driver.get("https://www.gosi.gov.sa/GOSIOnline/Business/NewSubscriber")
+        # 👨‍💼 تنفيذ السعودة - إضافة مشترك جديد
+        driver.find_element(By.LINK_TEXT, "إدارة الاشتراكات").click()
         time.sleep(2)
-        driver.find_element(By.ID, "jobTitle").send_keys("محاسب")
+        driver.find_element(By.LINK_TEXT, "إضافة مشترك").click()
+        time.sleep(2)
+        driver.find_element(By.ID, "nationalId").send_keys(national_id)
+        driver.find_element(By.ID, "birthDateHijri").send_keys(birth_date)
+        driver.find_element(By.ID, "occupation").send_keys("محاسب")
         driver.find_element(By.ID, "salary").send_keys("4000")
-        driver.find_element(By.ID, "add-subscriber-btn").click()
-        time.sleep(3)
+        driver.find_element(By.ID, "submit-button").click()
+        time.sleep(5)
 
         img_path = f"screenshots/{national_id}.png"
         driver.save_screenshot(img_path)
-        send_whatsapp(sender, "✅ تم تنفيذ السعودة بنجاح: محاسب براتب 4000 ريال")
+        send_whatsapp(sender, f"✅ تم تسجيل سعودي جديد\nالمهنة: محاسب\nالراتب: 4000\n📅 تاريخ الميلاد: {birth_date}")
         send_whatsapp(sender, "📸 صورة الشاشة:", file_path=img_path)
-        log_action(national_id, "✅ تم تنفيذ السعودة")
+        return jsonify({"status": "done"}), 200
 
     except Exception as e:
         img_path = f"screenshots/error_{national_id}.png"
         driver.save_screenshot(img_path)
         error_text = extract_text(img_path)
-        send_whatsapp(sender, f"❌ فشل في التسجيل:\n{error_text}")
-        send_whatsapp(sender, "📸 صورة المشكلة:", file_path=img_path)
-        log_action(national_id, f"❌ فشل: {error_text}")
+        send_whatsapp(sender, f"❌ فشل التسجيل:\n{error_text}")
+        send_whatsapp(sender, "📸 صورة الخطأ:", file_path=img_path)
+        return jsonify({"error": str(e)}), 500
 
     finally:
         driver.quit()
 
-def wait_for_code(id_number):
-    for _ in range(60):
-        try:
-            with open(f"codes/{id_number}.txt", "r") as f:
-                return f.read().strip()
-        except:
-            time.sleep(3)
-    return ""
+def extract_text(img_path):
+    try:
+        return pytesseract.image_to_string(Image.open(img_path), lang='ara+eng').strip()
+    except:
+        return "تعذر قراءة الخطأ من الصورة"
 
 def send_whatsapp(to, body, file_path=None):
     sid = os.getenv("TWILIO_ACCOUNT_SID")
     token = os.getenv("TWILIO_AUTH_TOKEN")
     from_number = os.getenv("TWILIO_PHONE_NUMBER")
     client = Client(sid, token)
+
     data = {"body": body, "from_": from_number, "to": to}
     if file_path:
-        data["media_url"] = [f"https://your-server.com/screenshots/{Path(file_path).name}"]
+        url = f"https://your-server.com/screenshots/{os.path.basename(file_path)}"
+        data["media_url"] = [url]
+
     client.messages.create(**data)
-
-def extract_text(img_path):
-    try:
-        return pytesseract.image_to_string(Image.open(img_path), lang='eng+ara').strip()
-    except:
-        return "تعذر قراءة الخطأ من الصورة"
-
-def log_action(national_id, msg):
-    log = {"id": national_id, "msg": msg, "time": datetime.datetime.now().isoformat()}
-    with open("logs.json", "a", encoding="utf-8") as f:
-        json.dump(log, f, ensure_ascii=False)
-        f.write(",\n")
-
-def validate_password(password):
-    return (
-        re.search(r"[A-Z]", password) and
-        re.search(r"[a-z]", password) and
-        re.search(r"[0-9]", password)
-    )
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
