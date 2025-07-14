@@ -21,7 +21,7 @@ def bot_webhook():
     if request.content_type != "application/json":
         return "Unsupported Media Type", 415
 
-    data = request.json
+    data = request.get_json(force=True)
     msg = data.get("body", "").strip()
     sender = data.get("from")
 
