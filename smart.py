@@ -1,113 +1,116 @@
+import os
+import time
+import json
+import datetime
+import re
+import requests
 from flask import Flask, request, jsonify
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import WebDriverException
-import os, time, json, datetime
 from twilio.rest import Client
+from pathlib import Path
 from PIL import Image
 import pytesseract
-from convertdate import islamic, gregorian
-import re
+import openai
 
 app = Flask(__name__)
+TEMP_STORAGE = {}
 
-@app.route('/')
+# إعداد مفتاح OpenAI من متغير البيئة
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+
+@app.route("/")
 def home():
-    return '✅ البوت شغال تمام'
+    return "✅ البوت شغال بنجاح"
 
-@app.route('/bot', methods=['POST'])
+@app.route("/bot", methods=["POST"])
 def bot_webhook():
     data = request.json
-    print("📩 رسالة جديدة:", data)
-    return jsonify({"msg": "تم استلام الرسالة ✅"})
+    msg = data.get("body", "").strip()
+    sender = data.get("from")
 
-@app.route('/saudabot-login', methods=['POST'])
-def saudabot_login():
-    data = request.get_json()
-    national_id = data.get("id")
-    password = data.get("password")
-    code = data.get("code")
-    birth_date = data.get("birth_date")
-    sender = data.get("sender")
+    # التحقق من وجود رسالة
+    if not msg:
+        return jsonify({"status": "no_message"})
 
-    # تحويل التاريخ إذا كان ميلادي
-    if re.search(r'\d{4}-\d{2}-\d{2}', birth_date):
+    # الرد على كلمة سعودة
+    if msg == "سعودة":
+        text = "✉️ أرسل رقم الهوية وكلمة المرور بالشكل التالي:\nالهوية*كلمة_المرور"
+        return send_whatsapp(sender, text)
+
+    # إذا كانت الرسالة تحتوي على هوية وكلمة مرور
+    if "*" in msg:
+        parts = [x.strip() for x in msg.split("*")]
+        if len(parts) != 2:
+            return send_whatsapp(sender, "❌ تأكد من إدخال الهوية وكلمة المرور بشكل صحيح.")
+
+        national_id, password = parts
+
+        if not national_id.isdigit() or len(national_id) != 10:
+            return send_whatsapp(sender, "❌ رقم الهوية غير صحيح.")
+
+        if not validate_password(password):
+            return send_whatsapp(sender, "❌ كلمة المرور يجب أن تحتوي على حرف كبير، حرف صغير، رقم، ورمز.")
+
+        TEMP_STORAGE[sender] = {"id": national_id, "password": password, "step": "waiting_code"}
+        return send_whatsapp(sender, "🔐 أرسل الآن كود التحقق المكون من 4 أرقام")
+
+    # التحقق من كود التحقق
+    elif msg.isdigit() and len(msg) == 4:
+        if sender not in TEMP_STORAGE:
+            return send_whatsapp(sender, "❌ أرسل أولاً الهوية وكلمة المرور")
+
+        TEMP_STORAGE[sender]["code"] = msg
+        TEMP_STORAGE[sender]["step"] = "waiting_birth"
+        return send_whatsapp(sender, "📅 أرسل تاريخ ميلادك بالهجري (مثال: 1415/05/20) أو اكتب 'ميلادي' لتحويل التاريخ")
+
+    # تحويل الميلادي إلى هجري
+    elif "ميلادي" in msg:
+        return send_whatsapp(sender, "❗ أرسل تاريخ ميلادك بالهجري (مثال: 1415/05/20)")
+
+    # إدخال تاريخ الميلاد
+    elif re.match(r"^\d{4}/\d{2}/\d{2}$", msg):
+        TEMP_STORAGE[sender]["birth"] = msg
+        TEMP_STORAGE[sender]["step"] = "completed"
+        return send_whatsapp(sender, "✅ تم استلام جميع البيانات بنجاح. يتم الآن تنفيذ عملية السعودة...")
+
+    # رد ذكي باستخدام OpenAI
+    else:
         try:
-            y, m, d = map(int, birth_date.split('-'))
-            hijri = islamic.from_gregorian(y, m, d)
-            birth_date = f"{hijri[2]:02d}/{hijri[1]:02d}/{hijri[0]}"
-        except:
-            birth_date = birth_date  # يبقى كما هو إذا فشل التحويل
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "أنت مساعد ذكي يرد على استفسارات السعودة فقط."},
+                    {"role": "user", "content": msg},
+                ]
+            )
+            reply = response.choices[0].message.content
+            return send_whatsapp(sender, reply)
+        except Exception as e:
+            return send_whatsapp(sender, f"حدث خطأ أثناء الاتصال بـ OpenAI: {e}")
 
-    chrome_options = Options()
-    chrome_options.add_argument('--headless')
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    driver = webdriver.Chrome(options=chrome_options)
+    return jsonify({"status": "done"})
 
-    try:
-        driver.get("https://www.gosi.gov.sa/GOSIOnline/")
-        driver.find_element(By.LINK_TEXT, "تسجيل الدخول").click()
-        time.sleep(2)
-        driver.find_element(By.XPATH, "//button[contains(text(), 'أعمال')]").click()
-        time.sleep(2)
-        driver.find_element(By.ID, "username").send_keys(national_id)
-        driver.find_element(By.ID, "password").send_keys(password)
-        driver.find_element(By.ID, "login-button").click()
-        time.sleep(3)
-        driver.find_element(By.ID, "otp").send_keys(code)
-        driver.find_element(By.ID, "verify-button").click()
-        time.sleep(5)
+def validate_password(password):
+    return (
+        len(password) >= 8 and
+        re.search(r"[A-Z]", password) and
+        re.search(r"[a-z]", password) and
+        re.search(r"[0-9]", password) and
+        re.search(r"[^A-Za-z0-9]", password)
+    )
 
-        # 👨‍💼 تنفيذ السعودة - إضافة مشترك جديد
-        driver.find_element(By.LINK_TEXT, "إدارة الاشتراكات").click()
-        time.sleep(2)
-        driver.find_element(By.LINK_TEXT, "إضافة مشترك").click()
-        time.sleep(2)
-        driver.find_element(By.ID, "nationalId").send_keys(national_id)
-        driver.find_element(By.ID, "birthDateHijri").send_keys(birth_date)
-        driver.find_element(By.ID, "occupation").send_keys("محاسب")
-        driver.find_element(By.ID, "salary").send_keys("4000")
-        driver.find_element(By.ID, "submit-button").click()
-        time.sleep(5)
+def send_whatsapp(to, body):
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+    from_number = os.environ.get("WHATSAPP_NUMBER")
 
-        img_path = f"screenshots/{national_id}.png"
-        driver.save_screenshot(img_path)
-        send_whatsapp(sender, f"✅ تم تسجيل سعودي جديد\nالمهنة: محاسب\nالراتب: 4000\n📅 تاريخ الميلاد: {birth_date}")
-        send_whatsapp(sender, "📸 صورة الشاشة:", file_path=img_path)
-        return jsonify({"status": "done"}), 200
+    client = Client(account_sid, auth_token)
 
-    except Exception as e:
-        img_path = f"screenshots/error_{national_id}.png"
-        driver.save_screenshot(img_path)
-        error_text = extract_text(img_path)
-        send_whatsapp(sender, f"❌ فشل التسجيل:\n{error_text}")
-        send_whatsapp(sender, "📸 صورة الخطأ:", file_path=img_path)
-        return jsonify({"error": str(e)}), 500
+    message = client.messages.create(
+        body=body,
+        from_=f"whatsapp:{from_number}",
+        to=f"whatsapp:{to}"
+    )
+    return jsonify({"status": "sent"})
 
-    finally:
-        driver.quit()
-
-def extract_text(img_path):
-    try:
-        return pytesseract.image_to_string(Image.open(img_path), lang='ara+eng').strip()
-    except:
-        return "تعذر قراءة الخطأ من الصورة"
-
-def send_whatsapp(to, body, file_path=None):
-    sid = os.getenv("TWILIO_ACCOUNT_SID")
-    token = os.getenv("TWILIO_AUTH_TOKEN")
-    from_number = os.getenv("TWILIO_PHONE_NUMBER")
-    client = Client(sid, token)
-
-    data = {"body": body, "from_": from_number, "to": to}
-    if file_path:
-        url = f"https://your-server.com/screenshots/{os.path.basename(file_path)}"
-        data["media_url"] = [url]
-
-    client.messages.create(**data)
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, threaded=True)
+if __name__ == "__main__":
+    app.run(debug=True)
