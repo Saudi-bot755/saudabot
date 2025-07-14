@@ -20,7 +20,10 @@ openai.api_key = os.environ.get("OPENAI_API_KEY")
 @app.route("/")
 def home():
     return "✅ البوت شغال بنجاح"
-
+@app.route('/bot', methods=['POST'])
+def bot_webhook():
+    if request.content_type != 'application/json':
+        return "Unsupported Media Type", 415
 @app.route("/bot", methods=["POST"])
 def bot_webhook():
     data = request.json
