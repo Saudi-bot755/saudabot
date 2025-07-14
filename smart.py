@@ -1,8 +1,9 @@
-import os
-import json
-import datetime
-import re
 from flask import Flask, request, jsonify
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import WebDriverException
+import os, time, json, datetime
 from twilio.rest import Client
 import pytesseract
 from PIL import Image
@@ -10,96 +11,114 @@ from pathlib import Path
 import openai
 
 app = Flask(__name__)
-TEMP_STORAGE = {}
 
-@app.route("/")
+@app.route('/')
 def home():
-    return "✅ البوت شغال بنجاح"
+    return '✅ البوت شغال تمام'
 
-@app.route("/bot", methods=["POST"])
+@app.route('/bot', methods=['POST'])
 def bot_webhook():
-    if request.content_type != "application/json":
-        return "Unsupported Media Type", 415
-
     data = request.get_json(force=True)
-    msg = data.get("body", "").strip()
-    sender = data.get("from")
+    print("📩 رسالة جديدة:", data)
+    return jsonify({"msg": "تم استلام الرسالة ✅"})
 
-    # التحقق من التنسيق: رقم الهوية * كلمة المرور
-    if "*" in msg:
-        parts = [x.strip() for x in msg.split("*")]
-        if len(parts) != 2:
-            return send_whatsapp(sender, "❌ التنسيق غير صحيح. ارسل الرقم وكلمة المرور بهذا الشكل: 1234567890, password123")
+@app.route('/saudabot-login', methods=['POST'])
+def saudabot_login():
+    data = request.get_json(force=True)
+    national_id = data.get("id")
+    password = data.get("password")
+    sender = data.get("sender")
 
-        national_id, password = parts
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--no-sandbox')
+    driver = webdriver.Chrome(options=chrome_options)
 
-        if not national_id.isdigit() or len(national_id) != 10:
-            return send_whatsapp(sender, "❌ رقم الهوية يجب أن يكون 10 أرقام.")
+    try:
+        driver.get("https://www.gosi.gov.sa/GOSIOnline/")
+        driver.find_element(By.LINK_TEXT, "تسجيل الدخول").click()
+        time.sleep(2)
+        driver.find_element(By.XPATH, "//button[contains(text(), 'أعمال')]").click()
+        time.sleep(2)
+        driver.find_element(By.ID, "username").send_keys(national_id)
+        driver.find_element(By.ID, "password").send_keys(password)
+        driver.find_element(By.ID, "login-button").click()
+        time.sleep(3)
 
-        if not validate_password(password):
-            return send_whatsapp(sender, "❌ كلمة المرور غير قوية. يجب أن تحتوي على حرف كبير وحروف صغيرة وأرقام.")
+        send_whatsapp(sender, "📲 أرسل كود التحقق من التأمينات خلال دقيقة")
 
-        TEMP_STORAGE[sender] = {
-            "id": national_id,
-            "password": password,
-            "step": "waiting_code"
-        }
+        code = wait_for_code(national_id)
+        driver.find_element(By.ID, "otp").send_keys(code)
+        driver.find_element(By.ID, "verify-button").click()
+        time.sleep(3)
 
-        return send_whatsapp(sender, "🔐 تم حفظ البيانات. أرسل كود التحقق الآن.")
+        img_path = f"screenshots/{national_id}.png"
+        driver.save_screenshot(img_path)
 
-    # التحقق من كود التحقق
-    elif msg.isdigit() and len(msg) == 4:
-        if sender not in TEMP_STORAGE or TEMP_STORAGE[sender]["step"] != "waiting_code":
-            return send_whatsapp(sender, "❗ أرسل الهوية وكلمة المرور أولاً.")
+        send_whatsapp(sender, "✅ تم تسجيل سعودي جديد: المهنة محاسب، الراتب 4000 ريال")
+        send_whatsapp(sender, "📸 صورة الشاشة:", file_path=img_path)
+        log_action(national_id, "تمت العملية بنجاح")
+        return jsonify({"status": "done"}), 200
 
-        TEMP_STORAGE[sender]["code"] = msg
-        TEMP_STORAGE[sender]["step"] = "waiting_birth"
+    except Exception as e:
+        img_path = f"screenshots/error_{national_id}.png"
+        driver.save_screenshot(img_path)
+        text = extract_text(img_path)
+        ai_summary = get_ai_explanation(text)
+        send_whatsapp(sender, f"❌ فشل التسجيل:\n{ai_summary}")
+        send_whatsapp(sender, "📸 صورة المشكلة:", file_path=img_path)
+        log_action(national_id, f"خطأ: {ai_summary}")
+        return jsonify({"error": str(e)}), 500
 
-        return send_whatsapp(sender, "📅 أرسل تاريخ الميلاد الهجري بصيغة: 1410/01/01")
+    finally:
+        driver.quit()
 
-    # التحقق من تاريخ الميلاد الهجري
-    elif re.match(r"^14\d{2}/\d{2}/\d{2}$", msg):
-        if sender not in TEMP_STORAGE or TEMP_STORAGE[sender]["step"] != "waiting_birth":
-            return send_whatsapp(sender, "❗ أرسل كود التحقق أولاً.")
+def wait_for_code(id_number):
+    for _ in range(60):
+        try:
+            with open(f"codes/{id_number}.txt", "r") as f:
+                return f.read().strip()
+        except:
+            time.sleep(3)
+    return ""
 
-        TEMP_STORAGE[sender]["birth_date"] = msg
-        TEMP_STORAGE[sender]["step"] = "processing"
+def send_whatsapp(to, body, file_path=None):
+    sid = os.getenv("TWILIO_ACCOUNT_SID")
+    token = os.getenv("TWILIO_AUTH_TOKEN")
+    from_number = os.getenv("TWILIO_PHONE_NUMBER")
+    client = Client(sid, token)
+    data = {"body": body, "from_": from_number, "to": to}
+    if file_path:
+        data["media_url"] = [f"https://your-server.com/screenshots/{Path(file_path).name}"]
+    client.messages.create(**data)
 
-        # استكمال التسجيل هنا...
-        return send_whatsapp(sender, "🛠️ جارٍ التسجيل في التأمينات...")
+def extract_text(img_path):
+    try:
+        text = pytesseract.image_to_string(Image.open(img_path), lang='eng+ara')
+        return text.strip()
+    except:
+        return "تعذر قراءة الخطأ من الصورة"
 
-    else:
-        # الذكاء الاصطناعي للردود العامة
-        response = ask_openai(msg)
-        return send_whatsapp(sender, response)
-
-    return jsonify({"status": "done"})
-
-def send_whatsapp(to, message):
-    print(f"[رسالة إلى {to}]: {message}")
-    return jsonify({"status": "sent"})
-
-def validate_password(password):
-    return (
-        len(password) >= 8
-        and re.search(r"[A-Z]", password)
-        and re.search(r"[a-z]", password)
-        and re.search(r"\d", password)
-    )
-
-def ask_openai(prompt):
+def get_ai_explanation(text):
     try:
         openai.api_key = os.getenv("OPENAI_API_KEY")
-        chat = openai.ChatCompletion.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "أنت مساعد ذكي لبوت سعودة."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": "أنت مساعد تقني تشرح أخطاء المواقع بالعربية باختصار."},
+                {"role": "user", "content": text}
             ]
         )
-        return chat.choices[0].message.content
-    except Exception as e:
-        return "⚠️ حدث خطأ في الاتصال بالذكاء الاصطناعي."
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+        return response.choices[0].message.content.strip()
+    except:
+        return "📌 حدث خطأ في الاتصال بذكاء الاصطناعي."
+
+def log_action(national_id, msg):
+    log = {"id": national_id, "msg": msg, "time": datetime.datetime.now().isoformat()}
+    with open("logs.json", "a", encoding="utf-8") as f:
+        json.dump(log, f, ensure_ascii=False)
+        f.write(",\n")
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, threaded=True)
