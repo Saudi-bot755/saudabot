@@ -1,0 +1,5 @@
+flask
+selenium
+twilio
+pytesseract
+Pillow
