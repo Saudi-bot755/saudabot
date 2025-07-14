@@ -16,7 +16,10 @@ def home():
 
 @app.route('/bot', methods=['POST'])
 def bot_webhook():
-    data = request.json
+    if request.is_json:
+        data = request.get_json()
+    else:
+        data = request.form.to_dict()
     print("📩 استلمنا رسالة:", data)
     return 'تم ✅'
 @app.route("/saudabot-login", methods=["POST"])
