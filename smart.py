@@ -29,8 +29,7 @@ def bot_webhook():
     if "*" in msg:
         parts = [x.strip() for x in msg.split("*")]
         if len(parts) != 2:
-            return send_whatsapp(sender, "❌ التنسيق غير صحيح. ارسل الرقم وكلمة المرور بهذا الشكل:
-1234567890*Pass1234")
+            return send_whatsapp(sender, "❌ التنسيق غير صحيح. ارسل الرقم وكلمة المرور بهذا الشكل: 1234567890, password123")
 
         national_id, password = parts
 
