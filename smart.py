@@ -17,10 +17,20 @@ def home():
 
 @app.route('/bot', methods=['POST'])
 def bot_webhook():
-    data = request.json
-    print("📩 رسالة جديدة:", data)
-    return jsonify({"msg": "تم استلام الرسالة ✅"})
+    if request.is_json:
+        data = request.get_json()
+    else:
+        data = request.form.to_dict()
 
+    print("📩 رسالة جديدة:", data)
+    
+    message_body = data.get("Body", "").strip()
+    sender = data.get("From")
+
+    if message_body == os.getenv("BOT_TRIGGER_WORD", "سعوده"):
+        send_whatsapp(sender, "📩 أرسل رقم الهوية وكلمة المرور بالشكل التالي:\n1234567890*كلمة_المرور")
+    
+    return jsonify({"msg": "تم استلام الرسالة ✅"})
 @app.route('/saudabot-login', methods=['POST'])
 def saudabot_login():
     data = request.get_json()
