@@ -9,6 +9,9 @@ from twilio.rest import Client
 
 app = Flask(__name__)
 
+@app.route('/')
+def home():
+    return 'البوت يعمل ✅'
 @app.route("/saudabot-login", methods=["POST"])
 def saudabot_login():
     data = request.get_json()
