@@ -1,5 +1,0 @@
-flask
-selenium
-twilio
-requests
-openai==0.28.1
