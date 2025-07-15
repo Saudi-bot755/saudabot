@@ -9,6 +9,9 @@ from pathlib import Path
 from PIL import Image
 import openai
 
+# تعيين مفتاح GPT من متغيرات البيئة
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+
 app = Flask(__name__)
 
 # Twilio credentials
