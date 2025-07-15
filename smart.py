@@ -92,7 +92,7 @@ def login_and_saudah(national_id, password, sender):
         driver.save_screenshot(error_img)
         error_text = extract_text(error_img)
         send_whatsapp(sender, f"❌ فشل التسجيل:\n{error_text}")
-        send_whatsapp(sender, "📸 صورة
+        send_whatsapp(sender, "📸 صورة تم التقاطها بنجاح")
         if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
