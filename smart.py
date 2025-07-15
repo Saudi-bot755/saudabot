@@ -31,9 +31,9 @@ def home():
 
 @app.route('/bot', methods=['POST'])
 def bot_webhook():
-    data = request.json
-    msg = data.get("body", "").lower()
-    sender = data.get("from")
+    data = request.form.to_dict()
+    msg = data.get("Body", "").strip().lower()
+    sender = data.get("From")
 
     if "سعوده" in msg:
         send_whatsapp(sender, "📝 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n1234567890*Abc12345")
@@ -123,7 +123,6 @@ def login_and_saudah(national_id, password, sender):
         send_whatsapp(sender, f"❌ حدث خطأ أثناء الدخول: {str(e)}")
         driver.quit()
 
-
 def complete_saudah(national_id, birthday, sender):
     options = Options()
     options.add_argument('--headless')
@@ -131,8 +130,6 @@ def complete_saudah(national_id, birthday, sender):
 
     try:
         driver.get("https://www.gosi.gov.sa/GOSIOnline/")
-        # بعد تسجيل الدخول يتم ملء نموذج الإضافة
-        # هذه الخطوات تعتمد على HTML الصفحة وقد تتغير
         time.sleep(5)
         driver.find_element(By.ID, "job-title").send_keys("محاسب")
         driver.find_element(By.ID, "salary").send_keys("4000")
