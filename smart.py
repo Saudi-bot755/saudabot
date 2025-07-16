@@ -23,9 +23,10 @@ client = Client(TWILIO_SID, TWILIO_AUTH)
 # إرسال رسالة واتساب
 def send_whatsapp(to, body):
     client.messages.create(
-        from_='whatsapp:' + TWILIO_NUMBER,
+        from_='whatsapp:+14155238886',  # رقم الساندبوكس الرسمي
         to='whatsapp:' + to,
         body=body
+    )
     )
 
 @app.route('/')
