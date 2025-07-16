@@ -20,7 +20,9 @@ TWILIO_AUTH = os.environ.get("TWILIO_AUTH")
 TWILIO_NUMBER = os.environ.get("TWILIO_NUMBER")
 client = Client(TWILIO_SID, TWILIO_AUTH)
 
-# إرسال رسالة واتسابdef send_whatsapp(to, body):
+# إرسال رسالة واتسابdef
+
+def send_whatsapp(to, body):
     client.messages.create(
         from_='whatsapp:+14155238886',  # رقم الساندبوكس الرسمي
         to='whatsapp:' + to,
