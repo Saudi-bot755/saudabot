@@ -10,9 +10,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
 import openai
 import re
-from dotenv import load_dotenv
-
-load_dotenv()  # تحميل المتغيرات من ملف .env
 
 # إعداد مفاتيح Twilio و OpenAI (يتم تعيينها في ملف .env)
 # TWILIO_ACCOUNT_SID و TWILIO_AUTH_TOKEN (قد لا نحتاجهما عند الرد بواسطة TwiML)
