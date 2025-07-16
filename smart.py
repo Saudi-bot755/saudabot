@@ -1,103 +1,109 @@
 import os
+import tempfile
+import time
+import requests
 from flask import Flask, request
-from twilio.twiml.messaging_response import MessagingResponse
+from twilio.rest import Client
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.keys import Keys
-import re
+from selenium.webdriver.common.by import By
 
 app = Flask(__name__)
 
-TWILIO_WHATSAPP_NUMBER = os.getenv('TWILIO_WHATSAPP_NUMBER', 'whatsapp:+14155238886')
-sessions = {}
+# بيانات Twilio من متغيرات البيئة
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
+USER_NUMBER = os.getenv("USER_NUMBER")
+IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
 
-def respond(message):
-    resp = MessagingResponse()
-    resp.message(message)
-    return str(resp)
+twilio_client = Client(TWILIO_SID, TWILIO_TOKEN)
 
-def login_to_gosi(national_id, password):
+def send_whatsapp_message(body):
+    twilio_client.messages.create(
+        from_=TWILIO_NUMBER,
+        to=USER_NUMBER,
+        body=body
+    )
+
+def send_whatsapp_image(image_url, caption=""):
+    twilio_client.messages.create(
+        from_=TWILIO_NUMBER,
+        to=USER_NUMBER,
+        body=caption,
+        media_url=[image_url]
+    )
+
+def upload_image_to_imgbb(image_path):
+    with open(image_path, 'rb') as file:
+        url = "https://api.imgbb.com/1/upload"
+        payload = {"key": IMGBB_API_KEY}
+        files = {"image": file}
+        response = requests.post(url, data=payload, files=files)
+        if response.status_code == 200:
+            return response.json()['data']['url']
+        else:
+            return None
+
+def capture_screenshot(driver):
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    driver.save_screenshot(tmp_file.name)
+    return tmp_file.name
+
+def perform_registration(national_id, password):
     options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
     driver = webdriver.Chrome(options=options)
-    driver.get("https://taminaty.gosi.gov.sa/")
     try:
-        id_input = driver.find_element(By.ID, "username")
-        password_input = driver.find_element(By.ID, "password")
-        id_input.send_keys(national_id)
-        password_input.send_keys(password)
-        password_input.send_keys(Keys.RETURN)
-        return driver
-    except Exception:
+        driver.get("https://www.gosi.gov.sa/")
+        time.sleep(3)
+        # مثال: البحث عن المدخلات وتعبئة البيانات
+        driver.find_element(By.ID, "id_number").send_keys(national_id)
+        driver.find_element(By.ID, "password").send_keys(password)
+        driver.find_element(By.ID, "login_button").click()
+        time.sleep(5)
+
+        if "الصفحة الرئيسية" in driver.page_source:
+            screenshot_path = capture_screenshot(driver)
+            return True, screenshot_path
+        else:
+            screenshot_path = capture_screenshot(driver)
+            return False, screenshot_path
+    except Exception as e:
+        screenshot_path = capture_screenshot(driver)
+        return False, screenshot_path
+    finally:
         driver.quit()
-        raise
 
-@app.route('/')
-def home():
-    return '✅ البوت يعمل بنجاح بدون ذكاء اصطناعي'
+@app.route("/bot", methods=["POST"])
+def bot():
+    incoming_msg = request.values.get("Body", "").strip()
+    session = request.values.get("WaId")
 
-@app.route('/message', methods=['POST'])
-def message():
-    incoming_msg = request.form.get('Body').strip()
-    from_number = request.form.get('From')
-    session = sessions.get(from_number, {'state': 'awaiting_login'})
-    state = session.get('state')
-
-    if state == 'awaiting_login':
-        if '*' in incoming_msg:
-            parts = incoming_msg.split('*', 1)
-            if len(parts) == 2 and parts[0].isdigit():
-                national_id = parts[0]
-                password = parts[1]
-                try:
-                    driver = login_to_gosi(national_id, password)
-                    session['driver'] = driver
-                    session['state'] = 'awaiting_otp'
-                    sessions[from_number] = session
-                    return respond("✅ تم تسجيل الدخول. أرسل رمز التحقق (OTP) المكون من 4 أرقام.")
-                except:
-                    return respond("❌ فشل تسجيل الدخول. تأكد من البيانات.")
-        return respond("📌 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n\n1234567890*كلمةالمرور")
-
-    elif state == 'awaiting_otp':
-        if re.fullmatch(r"\d{4}", incoming_msg):
-            driver = session.get('driver')
-            if driver:
-                try:
-                    otp_input = driver.find_element(By.NAME, 'otp')
-                    otp_input.send_keys(incoming_msg)
-                    otp_input.send_keys(Keys.RETURN)
-                    session['state'] = 'awaiting_dob'
-                    sessions[from_number] = session
-                    return respond("✅ تم التحقق. الآن أرسل تاريخ ميلادك مثل: 01/01/1400")
-                except:
-                    driver.quit()
-                    sessions.pop(from_number, None)
-                    return respond("❌ فشل التحقق من الرمز.")
-        return respond("⚠️ رمز التحقق غير صحيح. أرسل 4 أرقام فقط.")
-
-    elif state == 'awaiting_dob':
-        if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", incoming_msg):
-            driver = session.get('driver')
-            if driver:
-                try:
-                    dob_input = driver.find_element(By.NAME, 'birthDate')
-                    dob_input.send_keys(incoming_msg)
-                    dob_input.send_keys(Keys.RETURN)
-                    driver.quit()
-                    sessions.pop(from_number, None)
-                    return respond("✅ تم تقديم نموذج السعودة بنجاح!")
-                except:
-                    driver.quit()
-                    sessions.pop(from_number, None)
-                    return respond("❌ حدث خطأ أثناء إرسال النموذج.")
-        return respond("📌 أرسل تاريخ الميلاد بالتنسيق: يوم/شهر/سنة هجرية مثل:\n01/01/1400")
-
+    if incoming_msg.lower().startswith("سعوده"):
+        send_whatsapp_message("✅ يرجى إرسال رقم الهوية متبوعًا بكلمة المرور على الشكل التالي:\nرقم_الهوية*كلمة_المرور")
+    elif "*" in incoming_msg:
+        try:
+            national_id, password = incoming_msg.split("*")
+            send_whatsapp_message("⏳ يرجى الانتظار، جارٍ التسجيل...")
+            success, screenshot_path = perform_registration(national_id, password)
+            image_url = upload_image_to_imgbb(screenshot_path)
+            os.remove(screenshot_path)
+            if image_url:
+                if success:
+                    send_whatsapp_image(image_url, "✅ تم التسجيل بنجاح")
+                else:
+                    send_whatsapp_image(image_url, "❌ حدث خطأ أثناء محاولة التسجيل")
+            else:
+                send_whatsapp_message("⚠️ تعذر رفع الصورة، لكن العملية تمت")
+        except Exception as e:
+            send_whatsapp_message("⚠️ تنسيق غير صحيح. استخدم الشكل: رقم_الهوية*كلمة_المرور")
     else:
-        return respond("📢 مرحباً بك! أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n1234567890*كلمةالمرور")
+        send_whatsapp_message("👋 مرحبًا، أرسل كلمة \"سعوده\" للبدء")
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    return "OK"
+
+if __name__ == "__main__":
+    app.run(debug=True, port=10000)
