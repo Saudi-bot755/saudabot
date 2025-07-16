@@ -1,110 +1,140 @@
 import os
-import tempfile
 import time
 import requests
-from flask import Flask, request
-from twilio.rest import Client
+from flask import Flask, request, jsonify
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import WebDriverException, NoSuchElementException
+from twilio.rest import Client
+from pathlib import Path
+from PIL import Image
 
+# إعداد التطبيق
 app = Flask(__name__)
 
-# بيانات Twilio من متغيرات البيئة
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
-USER_NUMBER = os.getenv("USER_NUMBER")
-IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
+# إعداد متغيرات البيئة
+TWILIO_SID = os.environ.get("TWILIO_SID")
+TWILIO_AUTH = os.environ.get("TWILIO_AUTH")
+TWILIO_NUMBER = os.environ.get("TWILIO_NUMBER")
+IMGUR_CLIENT_ID = os.environ.get("IMGUR_CLIENT_ID")
 
-twilio_client = Client(TWILIO_SID, TWILIO_TOKEN)
+client = Client(TWILIO_SID, TWILIO_AUTH)
 
-def send_whatsapp_message(body):
-    twilio_client.messages.create(
-        from_=TWILIO_NUMBER,
-        to=USER_NUMBER,
-        body=body
-    )
+# الجلسات المؤقتة لكل مستخدم
+sessions = {}
 
-def send_whatsapp_image(image_url, caption=""):
-    twilio_client.messages.create(
-        from_=TWILIO_NUMBER,
-        to=USER_NUMBER,
-        body=caption,
-        media_url=[image_url]
-    )
+# إرسال رسالة واتساب
 
-def upload_image_to_imgbb(image_path):
-    with open(image_path, 'rb') as file:
-        url = "https://api.imgbb.com/1/upload"
-        payload = {"key": IMGBB_API_KEY}
-        files = {"image": file}
-        response = requests.post(url, data=payload, files=files)
-        if response.status_code == 200:
-            return response.json()['data']['url']
+def send_whatsapp(to, body, media_url=None):
+    message_data = {
+        "from_": f"whatsapp:{TWILIO_NUMBER}",
+        "to": f"whatsapp:{to}",
+        "body": body
+    }
+    if media_url:
+        message_data["media_url"] = [media_url]
+    client.messages.create(**message_data)
+
+@app.route('/')
+def home():
+    return '✅ البوت شغال'
+
+@app.route('/bot', methods=['POST'])
+def webhook():
+    data = request.form
+    msg = data.get("Body", "").strip()
+    sender = data.get("From")
+    phone = sender.replace("whatsapp:", "")
+
+    session = sessions.get(phone, {"step": "start"})
+
+    if session["step"] == "start":
+        if "*" in msg:
+            try:
+                nid, pwd = msg.split("*", 1)
+                if not nid.isdigit() or len(nid) != 10:
+                    return send_whatsapp(phone, "❌ رقم الهوية غير صحيح")
+                sessions[phone] = {"nid": nid, "pwd": pwd, "step": "waiting_otp"}
+                send_whatsapp(phone, "⏳ يرجى الانتظار، جاري تسجيل الدخول...")
+                result, screenshot_path = login_and_screenshot(nid, pwd)
+                if result == "otp":
+                    url = upload_to_imgur(screenshot_path)
+                    send_whatsapp(phone, "📲 أرسل كود التحقق المكون من 4 أرقام", media_url=url)
+                else:
+                    url = upload_to_imgur(screenshot_path)
+                    send_whatsapp(phone, "❌ فشل تسجيل الدخول. تحقق من البيانات.", media_url=url)
+                    sessions.pop(phone)
+            except Exception as e:
+                send_whatsapp(phone, "⚠️ خطأ في المعالجة. أعد المحاولة")
         else:
-            return None
+            send_whatsapp(phone, "📌 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n1234567890*Abc12345")
 
-def capture_screenshot(driver):
-    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    driver.save_screenshot(tmp_file.name)
-    return tmp_file.name
+    elif session["step"] == "waiting_otp":
+        if msg.isdigit() and len(msg) == 4:
+            send_whatsapp(phone, "📆 أرسل تاريخ ميلادك بهذا الشكل: 1990-01-01")
+            sessions[phone]["otp"] = msg
+            sessions[phone]["step"] = "waiting_birthdate"
+        else:
+            send_whatsapp(phone, "❗ رمز التحقق يجب أن يكون 4 أرقام")
 
-def perform_registration(national_id, password):
+    elif session["step"] == "waiting_birthdate":
+        birth = msg
+        send_whatsapp(phone, "✅ تم تقديم السعودة بنجاح")
+        sessions.pop(phone)
+
+    return jsonify({"status": "ok"})
+
+# تسجيل الدخول والتقاط صورة
+
+def login_and_screenshot(nid, pwd):
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     driver = webdriver.Chrome(options=options)
     try:
-        driver.get("https://www.gosi.gov.sa/")
-        time.sleep(3)
-        # مثال: البحث عن المدخلات وتعبئة البيانات
-        driver.find_element(By.ID, "id_number").send_keys(national_id)
-        driver.find_element(By.ID, "password").send_keys(password)
-        driver.find_element(By.ID, "login_button").click()
-        time.sleep(5)
+        driver.get("https://www.gosi.gov.sa/GOSIOnline/")
+        time.sleep(2)
+        driver.find_element(By.LINK_TEXT, "تسجيل الدخول").click()
+        time.sleep(2)
+        driver.find_element(By.ID, "username").send_keys(nid)
+        driver.find_element(By.ID, "password").send_keys(pwd)
+        driver.find_element(By.ID, "login-button").click()
+        time.sleep(4)
 
-        if "الصفحة الرئيسية" in driver.page_source:
-            screenshot_path = capture_screenshot(driver)
-            return True, screenshot_path
+        if "otp" in driver.page_source.lower():
+            path = take_screenshot(driver, f"otp_{nid}.png")
+            return "otp", path
         else:
-            screenshot_path = capture_screenshot(driver)
-            return False, screenshot_path
+            path = take_screenshot(driver, f"fail_{nid}.png")
+            return "fail", path
     except Exception as e:
-        screenshot_path = capture_screenshot(driver)
-        return False, screenshot_path
+        path = take_screenshot(driver, f"error_{nid}.png")
+        return "fail", path
     finally:
         driver.quit()
 
-@app.route("/bot", methods=["POST"])
-def bot():
-    incoming_msg = request.values.get("Body", "").strip()
-    session = request.values.get("WaId")
+# التقاط صورة شاشة
 
-    if incoming_msg.lower().startswith("سعوده"):
-        send_whatsapp_message("✅ يرجى إرسال رقم الهوية متبوعًا بكلمة المرور على الشكل التالي:\nرقم_الهوية*كلمة_المرور")
-    elif "*" in incoming_msg:
-        try:
-            national_id, password = incoming_msg.split("*")
-            send_whatsapp_message("⏳ يرجى الانتظار، جارٍ التسجيل...")
-            success, screenshot_path = perform_registration(national_id, password)
-            image_url = upload_image_to_imgbb(screenshot_path)
-            os.remove(screenshot_path)
-            if image_url:
-                if success:
-                    send_whatsapp_image(image_url, "✅ تم التسجيل بنجاح")
-                else:
-                    send_whatsapp_image(image_url, "❌ حدث خطأ أثناء محاولة التسجيل")
-            else:
-                send_whatsapp_message("⚠️ تعذر رفع الصورة، لكن العملية تمت")
-        except Exception as e:
-            send_whatsapp_message("⚠️ تنسيق غير صحيح. استخدم الشكل: رقم_الهوية*كلمة_المرور")
+def take_screenshot(driver, name):
+    folder = Path("temp")
+    folder.mkdir(exist_ok=True)
+    path = folder / name
+    driver.save_screenshot(str(path))
+    return str(path)
+
+# رفع صورة إلى Imgur
+
+def upload_to_imgur(image_path):
+    headers = {"Authorization": f"Client-ID {IMGUR_CLIENT_ID}"}
+    with open(image_path, 'rb') as f:
+        response = requests.post("https://api.imgur.com/3/upload", headers=headers, files={"image": f})
+    if response.status_code == 200:
+        return response.json()['data']['link']
     else:
-        send_whatsapp_message("👋 مرحبًا، أرسل كلمة \"سعوده\" للبدء")
-
-    return "OK"
+        return None
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host='0.0.0.0',
+    port=int(os.environ.get("PORT", 5000)))
