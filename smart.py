@@ -10,14 +10,21 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
 import openai
 import re
+from flask import Flask, request
+import os
 
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return '✅ البوت شغال تمام'
+    
 # إعداد مفاتيح Twilio و OpenAI (يتم تعيينها في ملف .env)
 # TWILIO_ACCOUNT_SID و TWILIO_AUTH_TOKEN (قد لا نحتاجهما عند الرد بواسطة TwiML)
 # TWILIO_WHATSAPP_NUMBER: رقم صندوق الواتساب (Sandbox) بصيغة whatsapp:+14155238886
 TWILIO_WHATSAPP_NUMBER = os.getenv('TWILIO_WHATSAPP_NUMBER', 'whatsapp:+14155238886')
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
-app = Flask(__name__)
 
 # قاموس لتخزين جلسات المستخدمين وحالتهم
 sessions = {}
