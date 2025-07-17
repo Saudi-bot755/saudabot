@@ -1,4 +1,4 @@
-# smart.py
+# smart.py #تعديل اعاده نشر
 import os
 import time
 import requests
