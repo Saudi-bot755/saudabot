@@ -17,7 +17,7 @@ account_sid = os.environ['TWILIO_ACCOUNT_SID']
 auth_token = os.environ['TWILIO_AUTH_TOKEN']
 twilio_number = os.environ['TWILIO_NUMBER']
 user_number = os.environ['USER_PHONE_NUMBER']
-imgbb_api_key = os.environ['IMGBB_API_KEY']  # استخدم متغير البيئة الجديد
+imgbb_api_key = os.environ['IMGBB_API_KEY']
 
 client = Client(account_sid, auth_token)
 
@@ -49,7 +49,7 @@ def send_whatsapp(to, message, media_url=None):
 
 @app.route("/bot", methods=['POST'])
 def bot():
-    incoming_msg = request.values.get('Body', '').strip().lower()
+    incoming_msg = request.values.get('Body', '').strip()
     sender = request.values.get('From', '').replace('whatsapp:', '')
     print(f"Incoming: {incoming_msg}")
 
@@ -66,21 +66,21 @@ def bot():
             'waiting_otp': "🔐 نحتاج رمز التحقق OTP، الرجاء إرساله مثل: 123456",
             'waiting_dob': "🎂 أرسل تاريخ الميلاد بالشكل: 1410/10/05",
             'confirm_job': "💼 هل تؤكد إضافة المهنة 'محاسب' والراتب 4000؟ أرسل 'نعم' أو 'لا'",
-            'waiting_start': "📅 أرسل تاريخ بدء العمل (مثال: 1446/01/01) أو أرسل 'تخطي'",
+            'waiting_start': "📅 أرسل تاريخ بدء العمل (1446/01/01) أو أرسل 'تخطي'",
             'waiting_qual': "🎓 أرسل المؤهل العلمي أو أرسل 'تخطي'",
-            'registering': "⏳ جاري التسجيل...",
+            'registering': "⌛ جاري التسجيل...",
             'done': "✅ تم التسجيل بنجاح!",
             'error': "❌ فشل التسجيل، تحقق من البيانات أو الموقع."
-        }.get(st, "📭 لا يوجد تسجيل نشط. أرسل سعوده للبدء.")
+        }.get(st, "📬 لا يوجد تسجيل نشط. أرسل سعوده للبدء.")
         send_whatsapp(sender, msg)
 
-    elif "*" in incoming_msg and session_state['step'] == 'awaiting_login':
+    elif session_state['step'] == 'awaiting_login' and incoming_msg.count("*") == 1:
         try:
             nid, pwd = incoming_msg.split("*")
             session_state['nid'] = nid.strip()
             session_state['pwd'] = pwd.strip()
             session_state['status'] = 'registering'
-            send_whatsapp(sender, "⏳ تسجيل الدخول... انتظر")
+            send_whatsapp(sender, "⌛ تسجيل الدخول... انتظر")
             result, img_url = login_to_gosi(nid, pwd)
             session_state['screenshot_url'] = img_url
             if result == 'otp':
@@ -101,7 +101,7 @@ def bot():
     elif incoming_msg == 'نعم' and session_state['status'] == 'confirm_job':
         session_state['job_confirmed'] = True
         session_state['status'] = 'waiting_start'
-        send_whatsapp(sender, "📅 أرسل تاريخ بدء العمل (مثال: 1446/01/01) أو 'تخطي'")
+        send_whatsapp(sender, "📅 أرسل تاريخ بدء العمل (1446/01/01) أو 'تخطي'")
 
     elif incoming_msg == 'تخطي' and session_state['status'] in ['waiting_start', 'waiting_qual']:
         if session_state['status'] == 'waiting_start':
@@ -126,12 +126,12 @@ def bot():
     elif session_state['status'] == 'waiting_otp' and incoming_msg.isdigit():
         session_state['otp'] = incoming_msg
         session_state['status'] = 'registering'
-        send_whatsapp(sender, "⏳ جاري التحقق من رمز OTP...")
+        send_whatsapp(sender, "⌛ جاري التحقق من رمز OTP...")
 
     elif session_state['status'] == 'waiting_dob' and "/" in incoming_msg:
         session_state['dob'] = incoming_msg
         session_state['status'] = 'registering'
-        send_whatsapp(sender, "⏳ جاري التحقق من تاريخ الميلاد...")
+        send_whatsapp(sender, "⌛ جاري التحقق من تاريخ الميلاد...")
 
     return ('', 200)
 
@@ -152,26 +152,18 @@ def login_to_gosi(nid, pwd):
         print(f"[Login Error] {str(e)}")
         return 'error', upload_to_imgbb("screen.png")
 
-def upload_to_imgur(path):
+def upload_to_imgbb(path):
     try:
-        import requests
-        api_key = os.environ['IMGBB_API_KEY']
-        with open(path, 'rb') as f:
-            img_base64 = base64.b64encode(f.read()).decode('utf-8')
+        with open(path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode('utf-8')
         res = requests.post(
             "https://api.imgbb.com/1/upload",
-            data={
-                'key': api_key,
-                'image': img_base64
-            }
+            data={"key": imgbb_api_key, "image": encoded}
         )
-        if res.status_code == 200:
-            return res.json()['data']['url']
-        else:
-            print(f"[ImgBB Error] {res.text}")
-            return None
+        link = res.json()['data']['url'] if res.status_code == 200 else None
+        return link
     except Exception as e:
-        print(f"[ImgBB Exception] {e}")
+        print(f"[imgbb Error] {e}")
         return None
 
 if __name__ == '__main__':
