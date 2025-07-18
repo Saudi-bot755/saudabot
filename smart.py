@@ -7,6 +7,7 @@ from twilio.rest import Client
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+import requests
 
 # Flask init
 app = Flask(__name__)
@@ -16,7 +17,7 @@ account_sid = os.environ['TWILIO_ACCOUNT_SID']
 auth_token = os.environ['TWILIO_AUTH_TOKEN']
 twilio_number = os.environ['TWILIO_NUMBER']
 user_number = os.environ['USER_PHONE_NUMBER']
-imgur_client_id = os.environ['IMGUR_CLIENT_ID']
+imgbb_api_key = os.environ['IMGBB_API_KEY']  # استخدم متغير البيئة الجديد
 
 client = Client(account_sid, auth_token)
 
@@ -144,23 +145,25 @@ def login_to_gosi(nid, pwd):
         driver.get("https://www.gosi.gov.sa")
         time.sleep(3)
         driver.save_screenshot("screen.png")
-        img_url = upload_to_imgur("screen.png")
+        img_url = upload_to_imgbb("screen.png")
         driver.quit()
         return 'success', img_url
     except Exception as e:
         print(f"[Login Error] {str(e)}")
-        return 'error', upload_to_imgur("screen.png")
+        return 'error', upload_to_imgbb("screen.png")
 
-def upload_to_imgur(path):
+def upload_to_imgbb(path):
     try:
-        import requests
-        headers = {'Authorization': f'Client-ID {imgur_client_id}'}
-        with open(path, 'rb') as f:
-            img_data = base64.b64encode(f.read())
-        res = requests.post("https://api.imgur.com/3/upload", headers=headers, data={'image': img_data})
-        return res.json()['data']['link'] if res.status_code == 200 else None
+        with open(path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode('utf-8')
+        res = requests.post(
+            "https://api.imgbb.com/1/upload",
+            data={"key": imgbb_api_key, "image": encoded}
+        )
+        link = res.json()['data']['url'] if res.status_code == 200 else None
+        return link
     except Exception as e:
-        print(f"[Imgur Error] {e}")
+        print(f"[imgbb Error] {e}")
         return None
 
 if __name__ == '__main__':
