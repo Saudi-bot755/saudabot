@@ -152,18 +152,26 @@ def login_to_gosi(nid, pwd):
         print(f"[Login Error] {str(e)}")
         return 'error', upload_to_imgbb("screen.png")
 
-def upload_to_imgbb(path):
+def upload_to_imgur(path):
     try:
-        with open(path, "rb") as f:
-            encoded = base64.b64encode(f.read()).decode('utf-8')
+        import requests
+        api_key = os.environ['IMGBB_API_KEY']
+        with open(path, 'rb') as f:
+            img_base64 = base64.b64encode(f.read()).decode('utf-8')
         res = requests.post(
             "https://api.imgbb.com/1/upload",
-            data={"key": imgbb_api_key, "image": encoded}
+            data={
+                'key': api_key,
+                'image': img_base64
+            }
         )
-        link = res.json()['data']['url'] if res.status_code == 200 else None
-        return link
+        if res.status_code == 200:
+            return res.json()['data']['url']
+        else:
+            print(f"[ImgBB Error] {res.text}")
+            return None
     except Exception as e:
-        print(f"[imgbb Error] {e}")
+        print(f"[ImgBB Exception] {e}")
         return None
 
 if __name__ == '__main__':
