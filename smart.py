@@ -31,7 +31,9 @@ session_state = {
     "job_confirmed": False,
     "start_date": None,
     "qualification": None,
-    "screenshot_url": None
+    "screenshot_url": None,
+    "employee_id": None,
+    "employee_dob": None
 }
 
 def send_whatsapp(to, message, media_url=None):
@@ -66,12 +68,14 @@ def bot():
             'waiting_otp': "🔐 نحتاج رمز التحقق OTP، الرجاء إرساله مثل: 123456",
             'waiting_dob': "🎂 أرسل تاريخ الميلاد بالشكل: 1410/10/05",
             'confirm_job': "💼 هل تؤكد إضافة المهنة 'محاسب' والراتب 4000؟ أرسل 'نعم' أو 'لا'",
-            'waiting_start': "🗓️ أرسل تاريخ بدء العمل (مثال: 1446/01/01) أو أرسل 'تخطي'",
+            'waiting_start': "📅 أرسل تاريخ بدء العمل (مثال: 1446/01/01) أو أرسل 'تخطي'",
             'waiting_qual': "🎓 أرسل المؤهل العلمي أو أرسل 'تخطي'",
+            'waiting_emp_id': "🆔 أرسل رقم الهوية للموظف السعودي الجديد",
+            'waiting_emp_dob': "🎂 أرسل تاريخ ميلاد الموظف الجديد بالشكل: 1410/10/05",
             'registering': "⏳ جاري التسجيل...",
             'done': "✅ تم التسجيل بنجاح!",
             'error': "❌ فشل التسجيل، تحقق من البيانات أو الموقع."
-        }.get(st, "📬 لا يوجد تسجيل نشط. أرسل سعوده للبدء.")
+        }.get(st, "📭 لا يوجد تسجيل نشط. أرسل سعوده للبدء.")
         send_whatsapp(sender, msg)
 
     elif "*" in incoming_msg and session_state['step'] == 'awaiting_login':
@@ -85,12 +89,63 @@ def bot():
             session_state['screenshot_url'] = img_url
             if result == 'otp':
                 session_state['status'] = 'waiting_otp'
-                send_whatsapp(sender, "🔐 أرسل رمز التحقق OTP", media_url=img_url)
+                send_whatsapp(sender, "🔐 أرسل رمز التحقق OTP")
+            elif result == 'dob':
+                session_state['status'] = 'waiting_dob'
+                send_whatsapp(sender, "🎂 أرسل تاريخ الميلاد بالشكل: 1410/10/05")
+            elif result == 'success':
+                session_state['status'] = 'confirm_job'
+                send_whatsapp(sender, "💼 هل تؤكد إضافة المهنة 'محاسب' والراتب 4000؟ أرسل 'نعم' أو 'لا'", media_url=img_url)
             else:
                 session_state['status'] = 'error'
-                send_whatsapp(sender, "❌ فشل الدخول. تحقق من البيانات أو الموقع", media_url=img_url)
-        except Exception as e:
-            send_whatsapp(sender, f"⚠️ خطأ في التنسيق: {str(e)}")
+                send_whatsapp(sender, "❌ خطأ أثناء الدخول", media_url=img_url)
+        except:
+            send_whatsapp(sender, "⚠️ تأكد من تنسيق الرسالة: الهوية*كلمةالمرور")
+
+    elif incoming_msg == 'نعم' and session_state['status'] == 'confirm_job':
+        session_state['job_confirmed'] = True
+        session_state['status'] = 'waiting_emp_id'
+        send_whatsapp(sender, "🆔 أرسل رقم الهوية للموظف السعودي الجديد")
+
+    elif session_state['status'] == 'waiting_emp_id':
+        session_state['employee_id'] = incoming_msg
+        session_state['status'] = 'waiting_emp_dob'
+        send_whatsapp(sender, "🎂 أرسل تاريخ ميلاد الموظف الجديد بالشكل: 1410/10/05")
+
+    elif session_state['status'] == 'waiting_emp_dob':
+        session_state['employee_dob'] = incoming_msg
+        session_state['status'] = 'waiting_start'
+        send_whatsapp(sender, "📅 أرسل تاريخ بدء العمل (مثال: 1446/01/01) أو 'تخطي'")
+
+    elif incoming_msg == 'تخطي' and session_state['status'] in ['waiting_start', 'waiting_qual']:
+        if session_state['status'] == 'waiting_start':
+            session_state['start_date'] = None
+            session_state['status'] = 'waiting_qual'
+            send_whatsapp(sender, "🎓 أرسل المؤهل العلمي أو 'تخطي'")
+        elif session_state['status'] == 'waiting_qual':
+            session_state['qualification'] = None
+            session_state['status'] = 'done'
+            send_whatsapp(sender, "✅ تم التسجيل النهائي")
+
+    elif session_state['status'] == 'waiting_start':
+        session_state['start_date'] = incoming_msg
+        session_state['status'] = 'waiting_qual'
+        send_whatsapp(sender, "🎓 أرسل المؤهل العلمي أو 'تخطي'")
+
+    elif session_state['status'] == 'waiting_qual':
+        session_state['qualification'] = incoming_msg
+        session_state['status'] = 'done'
+        send_whatsapp(sender, "✅ تم حفظ كل المعلومات بنجاح")
+
+    elif session_state['status'] == 'waiting_otp' and incoming_msg.isdigit():
+        session_state['otp'] = incoming_msg
+        session_state['status'] = 'registering'
+        send_whatsapp(sender, "⏳ جاري التحقق من رمز OTP...")
+
+    elif session_state['status'] == 'waiting_dob' and "/" in incoming_msg:
+        session_state['dob'] = incoming_msg
+        session_state['status'] = 'registering'
+        send_whatsapp(sender, "⏳ جاري التحقق من تاريخ الميلاد...")
 
     return ('', 200)
 
@@ -101,29 +156,15 @@ def login_to_gosi(nid, pwd):
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         driver = webdriver.Chrome(options=chrome_options)
-
-        driver.get("https://www.gosi.gov.sa/GOSIOnline/Pages/default.aspx")
+        driver.get("https://www.gosi.gov.sa")
         time.sleep(3)
-
-        driver.find_element(By.XPATH, "//a[contains(text(), 'تسجيل الدخول')]").click()
-        time.sleep(3)
-
-        driver.switch_to.window(driver.window_handles[-1])
-        time.sleep(5)
-
-        driver.find_element(By.ID, "userId").send_keys(nid)
-        driver.find_element(By.ID, "password").send_keys(pwd)
-        driver.find_element(By.ID, "submitButton").click()
-        time.sleep(5)
-
-        driver.save_screenshot("after_login.png")
-        img_url = upload_to_imgbb("after_login.png")
+        driver.save_screenshot("screen.png")
+        img_url = upload_to_imgbb("screen.png")
         driver.quit()
-        return 'otp', img_url
-
+        return 'success', img_url
     except Exception as e:
         print(f"[Login Error] {str(e)}")
-        return 'error', upload_to_imgbb("after_login.png")
+        return 'error', upload_to_imgbb("screen.png")
 
 def upload_to_imgbb(path):
     try:
@@ -133,7 +174,8 @@ def upload_to_imgbb(path):
             "https://api.imgbb.com/1/upload",
             data={"key": imgbb_api_key, "image": encoded}
         )
-        return res.json()['data']['url'] if res.status_code == 200 else None
+        link = res.json()['data']['url'] if res.status_code == 200 else None
+        return link
     except Exception as e:
         print(f"[imgbb Error] {e}")
         return None
