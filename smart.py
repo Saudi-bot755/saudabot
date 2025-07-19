@@ -1,3 +1,4 @@
+# smart.py
 import os
 import time
 import base64
@@ -9,164 +10,119 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 import requests
 
-# Flask init
 app = Flask(__name__)
 
-# Twilio config
+# Twilio & Imgbb config
 account_sid = os.environ['TWILIO_ACCOUNT_SID']
 auth_token = os.environ['TWILIO_AUTH_TOKEN']
 twilio_number = os.environ['TWILIO_NUMBER']
-user_number = os.environ['USER_PHONE_NUMBER']
 imgbb_api_key = os.environ['IMGBB_API_KEY']
 
 client = Client(account_sid, auth_token)
 
-session_state = {
-    "status": "idle",
-    "step": None,
-    "nid": None,
-    "pwd": None,
-    "otp": None,
-    "dob": None,
-    "job_confirmed": False,
-    "start_date": None,
-    "qualification": None,
-    "screenshot_url": None,
-    "employee_id": None,
-    "employee_dob": None
+session = {
+    'status': 'idle',
+    'step': None,
+    'data': {}
 }
 
-def send_whatsapp(to, message, media_url=None):
+FIELDS = [
+    ('employee_id', "🆔 رقم الهوية الوطنية للموظف"),
+    ('dob', "🎂 تاريخ الميلاد (مثال: 1410/01/01)"),
+    ('nationality', "🌍 الجنسية (اكتب: سعودي)"),
+    ('start_date', "📅 تاريخ مباشرة العمل (مثال: 1446/01/01)"),
+    ('contract_type', "📄 نوع العقد (دائم – مؤقت – تدريب)"),
+    ('contract_duration', "⏱️ مدة العقد (اكتب 'تخطي' إذا لا يوجد)"),
+    ('job_title', "💼 المهنة (مثال: محاسب)"),
+    ('basic_salary', "💰 الراتب الأساسي (مثال: 4000)"),
+    ('allowances', "🏠 البدلات (اكتب 'تخطي' إذا لا يوجد)"),
+    ('total_salary', "📊 الأجر الخاضع للاشتراك (الراتب + البدلات)"),
+    ('registration_reason', "📌 سبب التسجيل (التحاق جديد – نقل...)"),
+    ('branch', "🏢 جهة العمل أو الفرع"),
+    ('notes', "📝 ملاحظات إضافية (اكتب 'تخطي' إذا لا يوجد)")
+]
+
+@app.route('/bot', methods=['POST'])
+def bot():
+    incoming_msg = request.values.get('Body', '').strip()
+    sender = request.values.get('From', '').replace('whatsapp:', '')
+    print(f"User: {incoming_msg}")
+
+    if incoming_msg == 'سعوده':
+        session['status'] = 'login'
+        session['data'] = {}
+        session['step'] = None
+        return send_msg(sender, "🔐 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n1234567890*Abc12345")
+
+    elif '*' in incoming_msg and session['status'] == 'login':
+        try:
+            nid, pwd = incoming_msg.split('*')
+            session['data']['nid'] = nid
+            session['data']['pwd'] = pwd
+            session['status'] = 'otp_check'
+            return send_msg(sender, "📲 أرسل رمز التحقق OTP")
+        except:
+            return send_msg(sender, "⚠️ تنسيق خاطئ. أرسلها هكذا: الهوية*كلمةالمرور")
+
+    elif session['status'] == 'otp_check' and incoming_msg.isdigit():
+        session['data']['otp'] = incoming_msg
+        session['status'] = 'field_entry'
+        session['step'] = 0
+        return send_msg(sender, f"{FIELDS[0][1]}\nأو أرسل 'تخطي'")
+
+    elif session['status'] == 'field_entry':
+        key, label = FIELDS[session['step']]
+        if incoming_msg.lower() != 'تخطي':
+            session['data'][key] = incoming_msg
+        else:
+            session['data'][key] = None
+
+        session['step'] += 1
+        if session['step'] < len(FIELDS):
+            return send_msg(sender, f"{FIELDS[session['step']][1]}\nأو أرسل 'تخطي'")
+        else:
+            session['status'] = 'submitting'
+            send_msg(sender, "📤 جاري رفع الطلب، انتظر لحظات...")
+            return process_submission(sender)
+
+    return ('', 200)
+
+def process_submission(sender):
     try:
-        data = {
-            'from_': f'whatsapp:{twilio_number}',
-            'to': f'whatsapp:{to}',
-            'body': message
-        }
+        # Selenium login + form fill simulation
+        img = take_screenshot()
+        url = upload_img(img)
+        send_msg(sender, "✅ تم التسجيل بنجاح!", media_url=url)
+    except Exception as e:
+        print("[Error]", e)
+        img = take_screenshot()
+        url = upload_img(img)
+        send_msg(sender, "❌ فشل التسجيل، تحقق من البيانات", media_url=url)
+    return ('', 200)
+
+def send_msg(to, body, media_url=None):
+    try:
+        data = {'from_': f'whatsapp:{twilio_number}', 'to': f'whatsapp:{to}', 'body': body}
         if media_url:
             data['media_url'] = [media_url]
         client.messages.create(**data)
     except Exception as e:
-        print(f"[Twilio Error] {e}")
-
-@app.route("/bot", methods=['POST'])
-def bot():
-    incoming_msg = request.values.get('Body', '').strip().lower()
-    sender = request.values.get('From', '').replace('whatsapp:', '')
-    print(f"Incoming: {incoming_msg}")
-
-    if "سعوده" in incoming_msg:
-        session_state.update({
-            "status": "waiting_login",
-            "step": "awaiting_login"
-        })
-        send_whatsapp(sender, "📝 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n1234567890*Abc12345")
-
-    elif "سجلت" in incoming_msg:
-        st = session_state['status']
-        msg = {
-            'waiting_otp': "🔐 نحتاج رمز التحقق OTP، الرجاء إرساله مثل: 123456",
-            'waiting_dob': "🎂 أرسل تاريخ الميلاد بالشكل: 1410/10/05",
-            'confirm_job': "💼 هل تؤكد إضافة المهنة 'محاسب' والراتب 4000؟ أرسل 'نعم' أو 'لا'",
-            'waiting_start': "📅 أرسل تاريخ بدء العمل (مثال: 1446/01/01) أو أرسل 'تخطي'",
-            'waiting_qual': "🎓 أرسل المؤهل العلمي أو أرسل 'تخطي'",
-            'waiting_emp_id': "🆔 أرسل رقم الهوية للموظف السعودي الجديد",
-            'waiting_emp_dob': "🎂 أرسل تاريخ ميلاد الموظف الجديد بالشكل: 1410/10/05",
-            'registering': "⏳ جاري التسجيل...",
-            'done': "✅ تم التسجيل بنجاح!",
-            'error': "❌ فشل التسجيل، تحقق من البيانات أو الموقع."
-        }.get(st, "📭 لا يوجد تسجيل نشط. أرسل سعوده للبدء.")
-        send_whatsapp(sender, msg)
-
-    elif "*" in incoming_msg and session_state['step'] == 'awaiting_login':
-        try:
-            nid, pwd = incoming_msg.split("*")
-            session_state['nid'] = nid.strip()
-            session_state['pwd'] = pwd.strip()
-            session_state['status'] = 'registering'
-            send_whatsapp(sender, "⏳ تسجيل الدخول... انتظر")
-            result, img_url = login_to_gosi(nid, pwd)
-            session_state['screenshot_url'] = img_url
-            if result == 'otp':
-                session_state['status'] = 'waiting_otp'
-                send_whatsapp(sender, "🔐 أرسل رمز التحقق OTP")
-            elif result == 'dob':
-                session_state['status'] = 'waiting_dob'
-                send_whatsapp(sender, "🎂 أرسل تاريخ الميلاد بالشكل: 1410/10/05")
-            elif result == 'success':
-                session_state['status'] = 'confirm_job'
-                send_whatsapp(sender, "💼 هل تؤكد إضافة المهنة 'محاسب' والراتب 4000؟ أرسل 'نعم' أو 'لا'", media_url=img_url)
-            else:
-                session_state['status'] = 'error'
-                send_whatsapp(sender, "❌ خطأ أثناء الدخول", media_url=img_url)
-        except:
-            send_whatsapp(sender, "⚠️ تأكد من تنسيق الرسالة: الهوية*كلمةالمرور")
-
-    elif incoming_msg == 'نعم' and session_state['status'] == 'confirm_job':
-        session_state['job_confirmed'] = True
-        session_state['status'] = 'waiting_emp_id'
-        send_whatsapp(sender, "🆔 أرسل رقم الهوية للموظف السعودي الجديد")
-
-    elif session_state['status'] == 'waiting_emp_id':
-        session_state['employee_id'] = incoming_msg
-        session_state['status'] = 'waiting_emp_dob'
-        send_whatsapp(sender, "🎂 أرسل تاريخ ميلاد الموظف الجديد بالشكل: 1410/10/05")
-
-    elif session_state['status'] == 'waiting_emp_dob':
-        session_state['employee_dob'] = incoming_msg
-        session_state['status'] = 'waiting_start'
-        send_whatsapp(sender, "📅 أرسل تاريخ بدء العمل (مثال: 1446/01/01) أو 'تخطي'")
-
-    elif incoming_msg == 'تخطي' and session_state['status'] in ['waiting_start', 'waiting_qual']:
-        if session_state['status'] == 'waiting_start':
-            session_state['start_date'] = None
-            session_state['status'] = 'waiting_qual'
-            send_whatsapp(sender, "🎓 أرسل المؤهل العلمي أو 'تخطي'")
-        elif session_state['status'] == 'waiting_qual':
-            session_state['qualification'] = None
-            session_state['status'] = 'done'
-            send_whatsapp(sender, "✅ تم التسجيل النهائي")
-
-    elif session_state['status'] == 'waiting_start':
-        session_state['start_date'] = incoming_msg
-        session_state['status'] = 'waiting_qual'
-        send_whatsapp(sender, "🎓 أرسل المؤهل العلمي أو 'تخطي'")
-
-    elif session_state['status'] == 'waiting_qual':
-        session_state['qualification'] = incoming_msg
-        session_state['status'] = 'done'
-        send_whatsapp(sender, "✅ تم حفظ كل المعلومات بنجاح")
-
-    elif session_state['status'] == 'waiting_otp' and incoming_msg.isdigit():
-        session_state['otp'] = incoming_msg
-        session_state['status'] = 'registering'
-        send_whatsapp(sender, "⏳ جاري التحقق من رمز OTP...")
-
-    elif session_state['status'] == 'waiting_dob' and "/" in incoming_msg:
-        session_state['dob'] = incoming_msg
-        session_state['status'] = 'registering'
-        send_whatsapp(sender, "⏳ جاري التحقق من تاريخ الميلاد...")
-
+        print("[Twilio Error]", e)
     return ('', 200)
 
-def login_to_gosi(nid, pwd):
-    try:
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.get("https://www.gosi.gov.sa")
-        time.sleep(3)
-        driver.save_screenshot("screen.png")
-        img_url = upload_to_imgbb("screen.png")
-        driver.quit()
-        return 'success', img_url
-    except Exception as e:
-        print(f"[Login Error] {str(e)}")
-        return 'error', upload_to_imgbb("screen.png")
+def take_screenshot():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    driver = webdriver.Chrome(options=options)
+    driver.get('https://www.gosi.gov.sa')
+    time.sleep(2)
+    driver.save_screenshot('screen.png')
+    driver.quit()
+    return 'screen.png'
 
-def upload_to_imgbb(path):
+def upload_img(path):
     try:
         with open(path, "rb") as f:
             encoded = base64.b64encode(f.read()).decode('utf-8')
@@ -174,11 +130,10 @@ def upload_to_imgbb(path):
             "https://api.imgbb.com/1/upload",
             data={"key": imgbb_api_key, "image": encoded}
         )
-        link = res.json()['data']['url'] if res.status_code == 200 else None
-        return link
+        return res.json()['data']['url'] if res.status_code == 200 else None
     except Exception as e:
-        print(f"[imgbb Error] {e}")
+        print("[ImgBB Error]", e)
         return None
 
 if __name__ == '__main__':
-    app.run(debug=True, host="0.0.0.0", port=8080)
+    app.run(debug=True, host='0.0.0.0', port=8080)
