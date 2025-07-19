@@ -1,26 +1,27 @@
-from flask import Flask, request
-from twilio.twiml.messaging_response import MessagingResponse
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import os, time, requests, base64
+from flask import Flask, request
+from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
+
 @app.route('/bot', methods=['POST'])
 def bot():
     incoming_msg = request.values.get('Body', '').strip()
     from_number = request.values.get('From', '')
     
-    # استدعاء الدالة اللي تتعامل مع الرسائل
-    response_text = handle_message(incoming_msg, from_number)
+    print(f"📩 رسالة من {from_number}: {incoming_msg}")
     
-    return "OK", 200
-
-def handle_message(msg, user):
-    print(f"📩 رسالة من {user}: {msg}")
-    return "تم استلام رسالتك ✅"
+    # أنشئ رد باستخدام Twilio
+    resp = MessagingResponse()
+    msg = resp.message()
+    msg.body("✅ تم استلام رسالتك بنجاح، جاري المتابعة...")
+    
+    return str(resp)
     
 # إعداد المتغيرات البيئية
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
