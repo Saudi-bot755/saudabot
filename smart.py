@@ -8,7 +8,16 @@ from selenium.webdriver.support import expected_conditions as EC
 import os, time, requests, base64
 
 app = Flask(__name__)
-
+@app.route('/bot', methods=['POST'])
+def bot():
+    incoming_msg = request.values.get('Body', '').strip()
+    from_number = request.values.get('From', '')
+    
+    # استدعاء الدالة اللي تتعامل مع الرسائل
+    response_text = handle_message(incoming_msg, from_number)
+    
+    return "OK", 200
+    
 # إعداد المتغيرات البيئية
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
