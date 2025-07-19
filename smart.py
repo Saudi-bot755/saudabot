@@ -17,6 +17,10 @@ def bot():
     response_text = handle_message(incoming_msg, from_number)
     
     return "OK", 200
+
+def handle_message(msg, user):
+    print(f"📩 رسالة من {user}: {msg}")
+    return "تم استلام رسالتك ✅"
     
 # إعداد المتغيرات البيئية
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
