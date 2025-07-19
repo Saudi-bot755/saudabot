@@ -1,176 +1,200 @@
-import os
-import time
-import base64
-import datetime
 from flask import Flask, request
-from twilio.rest import Client
+from twilio.twiml.messaging_response import MessagingResponse
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-import requests
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import os, time, requests, base64
 
-# Flask setup
 app = Flask(__name__)
 
-# Load environment variables
-account_sid = os.environ['TWILIO_ACCOUNT_SID']
-auth_token = os.environ['TWILIO_AUTH_TOKEN']
-twilio_number = os.environ['TWILIO_NUMBER']
-user_number = os.environ['USER_PHONE_NUMBER']
-imgbb_api_key = os.environ['IMGBB_API_KEY']
+# إعداد المتغيرات البيئية
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
+IMGUR_CLIENT_ID = os.getenv("IMGUR_CLIENT_ID")
 
-client = Client(account_sid, auth_token)
+sessions = {}
 
-# Session state
-session = {
-    'step': None,
-    'nid': None,
-    'pwd': None,
-    'otp': None,
-    'employee': {},
-    'confirming': False,
-    'screenshot': None
-}
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp():
+    sender = request.form.get("From")
+    msg = request.form.get("Body").strip()
+    resp = MessagingResponse()
+    reply = resp.message()
 
-# Helper to send WhatsApp
+    session = sessions.get(sender, {"step": 0})
 
-def send_whatsapp(to, body, media_url=None):
-    try:
-        data = {'from_': f'whatsapp:{twilio_number}', 'to': f'whatsapp:{to}', 'body': body}
-        if media_url:
-            data['media_url'] = [media_url]
-        client.messages.create(**data)
-    except Exception as e:
-        print(f"Twilio error: {e}")
+    def send(message):
+        reply.body(message)
+        return str(resp)
 
-# Upload screenshot
-
-def upload_screenshot(path):
-    try:
+    def screenshot_and_upload(driver):
+        path = "/tmp/shot.png"
+        driver.save_screenshot(path)
         with open(path, "rb") as f:
-            encoded = base64.b64encode(f.read()).decode('utf-8')
-        res = requests.post("https://api.imgbb.com/1/upload", data={"key": imgbb_api_key, "image": encoded})
-        return res.json()['data']['url'] if res.status_code == 200 else None
-    except Exception as e:
-        print(f"ImgBB error: {e}")
+            b64 = base64.b64encode(f.read())
+        r = requests.post(
+            "https://api.imgur.com/3/image",
+            headers={"Authorization": f"Client-ID {IMGUR_CLIENT_ID}"},
+            data={"image": b64}
+        )
+        if r.ok:
+            return r.json()['data']['link']
         return None
 
-# Execute full registration
+    # خطوات المحادثة
+    if msg.lower() in ["سعوده", "ابدأ"]:
+        session = {"step": 1}
+        sessions[sender] = session
+        return send("🔐 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n1234567890*Abc12345")
 
-def register_employee():
-    try:
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        driver = webdriver.Chrome(options=options)
+    if session["step"] == 1:
+        try:
+            nid, pwd = msg.split("*")
+            session.update({"nid": nid, "pwd": pwd})
+            session["step"] = 2
+            sessions[sender] = session
+            return send("📲 أرسل رمز التحقق OTP")
+        except:
+            return send("❌ تأكد من التنسيق:\n1234567890*Abc12345")
 
-        driver.get("https://www.gosi.gov.sa")
-        time.sleep(2)
+    if session["step"] == 2:
+        session["otp"] = msg
+        session["step"] = 3
+        sessions[sender] = session
+        return send("🆔 رقم الهوية الوطنية للموظف\nأو أرسل 'تخطي'")
 
-        driver.find_element(By.LINK_TEXT, "تسجيل الدخول").click()
-        time.sleep(2)
-        driver.find_element(By.LINK_TEXT, "دخول أعمال").click()
-        time.sleep(2)
+    if session["step"] == 3:
+        session["emp_nid"] = msg
+        session["step"] = 4
+        sessions[sender] = session
+        return send("🎂 تاريخ الميلاد (مثال: 1410/01/01)\nأو أرسل 'تخطي'")
 
-        driver.find_element(By.ID, "username").send_keys(session['nid'])
-        driver.find_element(By.ID, "password").send_keys(session['pwd'])
-        driver.find_element(By.ID, "loginButton").click()
-        time.sleep(3)
+    if session["step"] == 4:
+        session["birth"] = msg
+        session["step"] = 5
+        sessions[sender] = session
+        return send("🌍 الجنسية (اكتب: سعودي)\nأو أرسل 'تخطي'")
 
-        # Assume OTP or DOB is handled (simulate pass)
-        # Continue to form
+    if session["step"] == 5:
+        session["nationality"] = msg
+        session["step"] = 6
+        sessions[sender] = session
+        return send("📅 تاريخ مباشرة العمل (مثال: 1446/01/01)\nأو أرسل 'تخطي'")
 
-        # Navigate to "تسجيل موظف سعودي"
-        driver.find_element(By.LINK_TEXT, "خدمات المشتركين").click()
-        time.sleep(1)
-        driver.find_element(By.LINK_TEXT, "تسجيل مشترك سعودي").click()
-        time.sleep(3)
+    if session["step"] == 6:
+        session["work_date"] = msg
+        session["step"] = 7
+        sessions[sender] = session
+        return send("📄 نوع العقد (دائم – مؤقت – تدريب)\nأو أرسل 'تخطي'")
 
-        # Fill form
-        driver.find_element(By.XPATH, "//*[@id='nationalId']").send_keys(session['employee']['id'])
-        driver.find_element(By.XPATH, "//*[@id='birthDate']").send_keys(session['employee']['dob'])
-        driver.find_element(By.XPATH, "//*[@id='nationality']").send_keys(session['employee']['nationality'])
-        driver.find_element(By.XPATH, "//*[@id='employmentDate']").send_keys(session['employee']['start'])
-        driver.find_element(By.XPATH, "//*[@id='contractType']").send_keys(session['employee']['contract'])
+    if session["step"] == 7:
+        session["contract"] = msg
+        session["step"] = 8
+        sessions[sender] = session
+        return send("⏱️ مدة العقد (اكتب 'تخطي' إذا لا يوجد)\nأو أرسل 'تخطي'")
 
-        if session['employee'].get('duration'):
-            driver.find_element(By.XPATH, "//*[@id='contractDuration']").send_keys(session['employee']['duration'])
+    if session["step"] == 8:
+        session["duration"] = msg
+        session["step"] = 9
+        sessions[sender] = session
+        return send("🧳 المهنة (مثال: محاسب)\nأو أرسل 'تخطي'")
 
-        driver.find_element(By.XPATH, "//*[@id='jobTitle']").send_keys(session['employee']['job'])
-        driver.find_element(By.XPATH, "//*[@id='basicSalary']").send_keys(session['employee']['salary'])
+    if session["step"] == 9:
+        session["job"] = msg
+        session["step"] = 10
+        sessions[sender] = session
+        return send("💰 الراتب الأساسي (مثال: 4000)\nأو أرسل 'تخطي'")
 
-        if session['employee'].get('allowance'):
-            driver.find_element(By.XPATH, "//*[@id='allowances']").send_keys(session['employee']['allowance'])
+    if session["step"] == 10:
+        session["salary"] = msg
+        session["step"] = 11
+        sessions[sender] = session
+        return send("🏡 البدلات (اكتب 'تخطي' إذا لا يوجد)\nأو أرسل 'تخطي'")
 
-        driver.find_element(By.XPATH, "//*[@id='subscriptionSalary']").send_keys(session['employee']['subscribe'])
-        driver.find_element(By.XPATH, "//*[@id='registrationReason']").send_keys(session['employee']['reason'])
+    if session["step"] == 11:
+        session["allow"] = msg
+        session["step"] = 12
+        sessions[sender] = session
+        return send("📊 الأجر الخاضع للاشتراك (الراتب + البدلات)\nأو أرسل 'تخطي'")
 
-        if session['employee'].get('branch'):
-            driver.find_element(By.XPATH, "//*[@id='branch']").send_keys(session['employee']['branch'])
+    if session["step"] == 12:
+        session["total"] = msg
+        session["step"] = 13
+        sessions[sender] = session
+        return send("📌 سبب التسجيل (التحاق جديد – نقل...)\nأو أرسل 'تخطي'")
 
-        if session['employee'].get('notes'):
-            driver.find_element(By.XPATH, "//*[@id='notes']").send_keys(session['employee']['notes'])
+    if session["step"] == 13:
+        session["reason"] = msg
+        session["step"] = 14
+        sessions[sender] = session
+        return send("🏢 جهة العمل أو الفرع\nأو أرسل 'تخطي'")
 
-        driver.save_screenshot("done.png")
-        img = upload_screenshot("done.png")
+    if session["step"] == 14:
+        session["branch"] = msg
+        session["step"] = 15
+        sessions[sender] = session
+        return send("📝 ملاحظات إضافية (اكتب 'تخطي' إذا لا يوجد)\nأو أرسل 'تخطي'")
 
-        driver.find_element(By.XPATH, "//*[@id='submitBtn']").click()
-        time.sleep(2)
-        driver.quit()
-        return True, img
-    except Exception as e:
-        print(f"Register error: {e}")
-        driver.save_screenshot("error.png")
-        return False, upload_screenshot("error.png")
+    if session["step"] == 15:
+        session["note"] = msg
+        session["step"] = 16
+        sessions[sender] = session
 
-@app.route("/bot", methods=['POST'])
-def bot():
-    msg = request.values.get('Body', '').strip()
-    sender = request.values.get('From', '').replace('whatsapp:', '')
+        # الآن نبدأ التنفيذ الحقيقي باستخدام Selenium
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        driver = webdriver.Chrome(options=chrome_options)
+        try:
+            driver.get("https://www.gosi.gov.sa")
+            WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.LINK_TEXT, "تسجيل الدخول"))).click()
+            WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.LINK_TEXT, "دخول أعمال"))).click()
 
-    if msg.lower() == 'سعوده':
-        session.update({'step': 'login'})
-        send_whatsapp(sender, "🔐 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n1234567890*Abc12345")
-        return ('', 200)
+            # دخول النفاذ الوطني (المفترض يتم تلقائي، يمكن التعديل لاحقًا)
+            time.sleep(10)
+            # إدخال OTP
+            # يتم تجاوزه في هذا النموذج التجريبي
 
-    if session['step'] == 'login' and '*' in msg:
-        nid, pwd = msg.split("*")
-        session.update({'nid': nid, 'pwd': pwd, 'step': 'employee_id'})
-        send_whatsapp(sender, "🆔 أرسل رقم هوية الموظف")
-        return ('', 200)
+            # تسجيل الموظف السعودي:
+            WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.XPATH, '//*[@id="nationalId"]'))).send_keys(session['emp_nid'])
+            if session['birth'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="birthDate"]').send_keys(session['birth'])
+            if session['nationality'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="nationality"]').send_keys(session['nationality'])
+            if session['work_date'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="employmentDate"]').send_keys(session['work_date'])
+            if session['contract'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="contractType"]').send_keys(session['contract'])
+            if session['duration'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="contractDuration"]').send_keys(session['duration'])
+            if session['job'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="jobTitle"]').send_keys(session['job'])
+            if session['salary'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="basicSalary"]').send_keys(session['salary'])
+            if session['allow'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="allowances"]').send_keys(session['allow'])
+            if session['total'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="subscriptionSalary"]').send_keys(session['total'])
+            if session['reason'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="registrationReason"]').send_keys(session['reason'])
+            if session['branch'] != "تخطي":
+                driver.find_element(By.XPATH, '//*[@id="branch"]').send_keys(session['branch'])
 
-    steps = [
-        ('employee_id', '🎂 أرسل تاريخ الميلاد (مثال: 1410/01/01)', 'dob'),
-        ('dob', '🌍 الجنسية (اكتب: سعودي)', 'nationality'),
-        ('nationality', '📆 تاريخ مباشرة العمل (مثال: 1446/01/01)', 'start'),
-        ('start', '📄 نوع العقد (دائم – مؤقت – تدريب)', 'contract'),
-        ('contract', '⏱️ مدة العقد (اكتب "تخطي" إذا لا يوجد)', 'duration'),
-        ('duration', '🧾 المهنة (مثال: محاسب)', 'job'),
-        ('job', '💰 الراتب الأساسي (مثال: 4000)', 'salary'),
-        ('salary', '🏠 البدلات (اكتب "تخطي" إذا لا يوجد)', 'allowance'),
-        ('allowance', '📊 الأجر الخاضع للاشتراك (الراتب + البدلات)', 'subscribe'),
-        ('subscribe', '📌 سبب التسجيل (التحاق جديد – نقل...)', 'reason'),
-        ('reason', '🏢 جهة العمل أو الفرع (أو اكتب "تخطي")', 'branch'),
-        ('branch', '📝 ملاحظات إضافية (أو اكتب "تخطي")', 'notes'),
-    ]
+            driver.find_element(By.XPATH, '//*[@id="submitBtn"]').click()
 
-    for step, next_msg, field in steps:
-        if session['step'] == step:
-            if msg == 'تخطي':
-                session['employee'][field] = None
-            else:
-                session['employee'][field] = msg
-            next_step = steps[steps.index((step, next_msg, field)) + 1] if step != 'notes' else None
-            session['step'] = next_step[0] if next_step else 'confirm'
-            send_whatsapp(sender, next_step[1] if next_step else '📤 جاري رفع الطلب...')
-            if not next_step:
-                success, shot = register_employee()
-                msg = '✅ تم التسجيل بنجاح!' if success else '❌ فشل التسجيل'
-                send_whatsapp(sender, msg, media_url=shot)
-            return ('', 200)
+            link = screenshot_and_upload(driver)
+            driver.quit()
+            return send(f"📦 تم رفع الطلب بنجاح!\nصورة التأكيد: {link}")
+        except Exception as e:
+            img = screenshot_and_upload(driver)
+            driver.quit()
+            return send(f"❌ حدث خطأ أثناء التسجيل\nالصورة: {img}\nالخطأ: {str(e)}")
 
-    return ('', 200)
+    return send("⚠️ أرسل 'سعوده' للبدء")
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=8080)
+if __name__ == "__main__":
+    app.run(debug=True, port=8080)
