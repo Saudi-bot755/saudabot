@@ -1,7 +1,5 @@
-Flask
-openai==0.28.1
-selenium
-pillow
-pytesseract
-twilio
-convertdate
+Flask==2.3.3
+twilio==9.0.1
+selenium==4.11.2
+requests==2.31.0
+python-dotenv==1.0.0
