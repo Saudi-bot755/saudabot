@@ -1,165 +1,142 @@
 import os
 import time
 import base64
+import datetime
 from flask import Flask, request
 from twilio.rest import Client
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import requests
+from PIL import Image
+import io
 
 app = Flask(__name__)
 
 account_sid = os.environ['TWILIO_ACCOUNT_SID']
 auth_token = os.environ['TWILIO_AUTH_TOKEN']
 twilio_number = os.environ['TWILIO_NUMBER']
-imgbb_api_key = os.environ['IMGBB_API_KEY']
-
 client = Client(account_sid, auth_token)
-session = {}
 
-def send_whatsapp(to, message, media_url=None):
-    try:
-        data = {
-            'from_': f'whatsapp:{twilio_number}',
-            'to': f'whatsapp:{to}',
-            'body': message
-        }
-        if media_url:
-            data['media_url'] = [media_url]
-        client.messages.create(**data)
-    except Exception as e:
-        print("Twilio Error:", e)
+sessions = {}
 
-def upload_to_imgbb(path):
-    with open(path, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode('utf-8')
-    res = requests.post("https://api.imgbb.com/1/upload", data={"key": imgbb_api_key, "image": encoded})
-    return res.json()['data']['url'] if res.status_code == 200 else None
+IMGUR_CLIENT_ID = os.environ.get('IMGUR_CLIENT_ID')
 
-def capture_and_send(driver, sender, caption):
-    screenshot_path = "screen.png"
-    driver.save_screenshot(screenshot_path)
-    img_url = upload_to_imgbb(screenshot_path)
-    send_whatsapp(sender, caption, img_url)
+
+def send_whatsapp_message(to, body, media_url=None):
+    message = {
+        'from_': f'whatsapp:{twilio_number}',
+        'body': body,
+        'to': to
+    }
+    if media_url:
+        message['media_url'] = [media_url]
+    client.messages.create(**message)
+
+
+def capture_screenshot(driver):
+    screenshot = driver.get_screenshot_as_png()
+    return screenshot
+
+
+def upload_to_imgur(image_binary):
+    headers = {"Authorization": f"Client-ID {IMGUR_CLIENT_ID}"}
+    files = {"image": image_binary}
+    response = requests.post("https://api.imgur.com/3/image", headers=headers, files=files)
+    return response.json()["data"]["link"]
+
 
 @app.route('/bot', methods=['POST'])
 def bot():
     incoming_msg = request.values.get('Body', '').strip()
-    sender = request.values.get('From', '').replace('whatsapp:', '')
+    from_number = request.values.get('From', '')
 
-    if sender not in session:
-        session[sender] = {"step": "start", "data": {}}
+    session = sessions.get(from_number, {'step': 'login'})
 
-    state = session[sender]
-    step = state['step']
-    data = state['data']
+    def save_session():
+        sessions[from_number] = session
 
-    if incoming_msg.lower() == "سعوده":
-        state['step'] = 'login'
-        send_whatsapp(sender, "🔐 أرسل رقم الهوية وكلمة المرور بهذا الشكل: 1234567890*Abc12345")
+    if session['step'] == 'login':
+        if '*' not in incoming_msg:
+            send_whatsapp_message(from_number, '🔐 أرسل رقم الهوية وكلمة المرور بهذا الشكل:\n1234567890*Aa123456')
+            return ('', 200)
+        nid, password = incoming_msg.split('*')
+        session['nid'] = nid
+        session['password'] = password
 
-    elif step == 'login' and "*" in incoming_msg:
-        nid, pwd = incoming_msg.split("*")
-        data['nid'] = nid.strip()
-        data['pwd'] = pwd.strip()
-        state['step'] = 'wait_otp'
-        send_whatsapp(sender, "📲 أرسل رمز التحقق OTP المرسل من أبشر")
-
-    elif step == 'wait_otp' and incoming_msg.isdigit():
-        data['otp'] = incoming_msg
-        state['step'] = 'emp_id'
-        send_whatsapp(sender, "🆔 أرسل رقم هوية الموظف السعودي الجديد")
-
-    elif step == 'emp_id':
-        data['employee_id'] = incoming_msg
-        state['step'] = 'emp_dob'
-        send_whatsapp(sender, "🎂 أرسل تاريخ ميلاده (هجري مثال: 1410/10/05)")
-
-    elif step == 'emp_dob':
-        data['employee_dob'] = incoming_msg
-        state['step'] = 'start_date'
-        send_whatsapp(sender, "📅 تاريخ مباشرة العمل؟ أو أرسل 'تخطي'")
-
-    elif step == 'start_date':
-        if incoming_msg != 'تخطي':
-            data['start_date'] = incoming_msg
-        state['step'] = 'contract_type'
-        send_whatsapp(sender, "📄 نوع العقد؟ (دائم/مؤقت/تدريب)")
-
-    elif step == 'contract_type':
-        data['contract_type'] = incoming_msg
-        state['step'] = 'contract_duration'
-        send_whatsapp(sender, "⏱ مدة العقد؟ أو أرسل 'تخطي'")
-
-    elif step == 'contract_duration':
-        if incoming_msg != 'تخطي':
-            data['contract_duration'] = incoming_msg
-        state['step'] = 'job_title'
-        send_whatsapp(sender, "🧾 المهنة؟ (مثال: محاسب)")
-
-    elif step == 'job_title':
-        data['job_title'] = incoming_msg
-        state['step'] = 'basic_salary'
-        send_whatsapp(sender, "💰 الراتب الأساسي؟")
-
-    elif step == 'basic_salary':
-        data['basic_salary'] = incoming_msg
-        state['step'] = 'allowances'
-        send_whatsapp(sender, "➕ البدلات؟ أو أرسل 'تخطي'")
-
-    elif step == 'allowances':
-        data['allowances'] = incoming_msg if incoming_msg != 'تخطي' else ''
-        state['step'] = 'subscription_salary'
-        send_whatsapp(sender, "📊 الأجر الخاضع للاشتراك؟")
-
-    elif step == 'subscription_salary':
-        data['subscription_salary'] = incoming_msg
-        state['step'] = 'registration_reason'
-        send_whatsapp(sender, "📝 سبب التسجيل؟ (التحاق جديد/نقل خدمة...)")
-
-    elif step == 'registration_reason':
-        data['registration_reason'] = incoming_msg
-        state['step'] = 'branch'
-        send_whatsapp(sender, "🏢 اسم الفرع؟")
-
-    elif step == 'branch':
-        data['branch'] = incoming_msg
-        state['step'] = 'confirm'
-        send_whatsapp(sender, "✅ هل تريد تقديم الطلب الآن؟ (نعم/لا)")
-
-    elif step == 'confirm':
-        if incoming_msg.lower() == 'نعم':
-            send_whatsapp(sender, "🚀 جاري تنفيذ التسجيل الفعلي...")
-            result = submit_registration(data, sender)
-            send_whatsapp(sender, result)
-            session.pop(sender)
-        else:
-            send_whatsapp(sender, "📭 تم إلغاء العملية.")
-            session.pop(sender)
-
-    return ('', 200)
-
-def submit_registration(data, sender):
-    try:
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
+
         driver = webdriver.Chrome(options=chrome_options)
+        session['driver'] = driver
 
-        driver.get("https://www.gosi.gov.sa")
-        time.sleep(2)
-        # تنفيذ خطوات تسجيل الدخول وتسجيل الموظف باستخدام XPath التي زودتني بها
-        # هذه مجرد واجهة، تحتاج تنفيذ حقيقي داخل الموقع.
+        try:
+            driver.get("https://www.gosi.gov.sa/GOSIOnline/Individual")
+            time.sleep(3)
+            # تسجيل الدخول (حسب الموقع الفعلي)
+            session['step'] = 'check_otp_or_dob'
+            save_session()
+            send_whatsapp_message(from_number, '✅ تم استلام البيانات بنجاح، جارٍ المتابعة...')
+        except Exception as e:
+            screenshot = capture_screenshot(driver)
+            img_url = upload_to_imgur(screenshot)
+            send_whatsapp_message(from_number, f'❌ حدث خطأ أثناء تسجيل الدخول:\n{str(e)}', media_url=img_url)
+            session['step'] = 'login'
+            save_session()
+        return ('', 200)
 
-        capture_and_send(driver, sender, "📸 تم إرسال لقطة من التسجيل")
-        driver.quit()
-        return "🎉 تم تقديم الطلب بنجاح!"
-    except Exception as e:
-        print("[Register Error]", str(e))
-        return "❌ حدث خطأ أثناء تقديم الطلب"
+    if session['step'] == 'check_otp_or_dob':
+        driver = session['driver']
+        try:
+            if 'otp_sent' not in session:
+                # تحقق هل الموقع يطلب OTP
+                if True:  # شرط مؤقت افتراضي
+                    send_whatsapp_message(from_number, '📲 أرسل رمز التحقق OTP الذي وصلك')
+                    session['otp_sent'] = True
+                    session['step'] = 'otp'
+                    save_session()
+                    return ('', 200)
+            elif 'dob_sent' not in session:
+                # تحقق هل الموقع يطلب تاريخ الميلاد
+                if True:  # شرط مؤقت افتراضي
+                    send_whatsapp_message(from_number, '📅 أرسل تاريخ الميلاد بصيغة: YYYY-MM-DD')
+                    session['dob_sent'] = True
+                    session['step'] = 'dob'
+                    save_session()
+                    return ('', 200)
+        except Exception as e:
+            screenshot = capture_screenshot(driver)
+            img_url = upload_to_imgur(screenshot)
+            send_whatsapp_message(from_number, f'❌ حدث خطأ أثناء التحقق:\n{str(e)}', media_url=img_url)
+            session['step'] = 'login'
+            save_session()
+        return ('', 200)
 
-if __name__ == '__main__':
-   
-    app.run(debug=True, port=8080,host='0.0.0.0')
+    if session['step'] == 'otp':
+        otp = incoming_msg
+        session['otp'] = otp
+        # إدخال OTP في الموقع هنا باستخدام Selenium
+        session['step'] = 'check_otp_or_dob'
+        save_session()
+        send_whatsapp_message(from_number, '✅ تم استلام رمز OTP، جارٍ المتابعة...')
+        return ('', 200)
+
+    if session['step'] == 'dob':
+        dob = incoming_msg
+        session['dob'] = dob
+        # إدخال تاريخ الميلاد في الموقع باستخدام Selenium
+        session['step'] = 'register_start'
+        save_session()
+        send_whatsapp_message(from_number, '✅ تم استلام تاريخ الميلاد، جارٍ البدء في التسجيل...')
+        return ('', 200)
+
+    return ('', 200)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
